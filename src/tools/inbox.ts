@@ -46,15 +46,17 @@ export function inboxTools(repo: Repository): McpTool[] {
         limit: z.number().int().positive().max(200).optional().default(50),
       },
       handler: async (args) => {
-        const rows = repo.readInbox({
+        const result = repo.readInbox({
           project: args.project,
           session_id: args.session_id,
           unread_only: args.unread_only,
           limit: args.limit,
         });
         return {
-          count: rows.length,
-          messages: rows.map(formatInbox),
+          count: result.messages.length,
+          unread_total: result.unread_total,
+          total: result.total,
+          messages: result.messages.map(formatInbox),
         };
       },
     },

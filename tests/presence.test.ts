@@ -58,22 +58,40 @@ describe("Repository — presence", () => {
     const before = repo.getSession("sess-A")!.last_heartbeat;
 
     vi.setSystemTime(new Date("2026-01-01T00:00:30Z"));
-    const ok = repo.heartbeat("sess-A");
-    expect(ok).toBe(true);
+    const res = repo.heartbeat("sess-A");
+    expect(res.ok).toBe(true);
+    expect(res.recreated).toBeUndefined();
 
     const after = repo.getSession("sess-A")!.last_heartbeat;
     expect(after).toBeGreaterThan(before);
   });
 
-  it("heartbeat returns false for unknown session", () => {
-    expect(repo.heartbeat("nope")).toBe(false);
+  it("heartbeat on unknown session returns explicit reason + advice", () => {
+    const res = repo.heartbeat("nope");
+    expect(res.ok).toBe(false);
+    expect(res.reason).toBe("session_not_found");
+    expect(res.advice).toMatch(/session_register/);
+  });
+
+  it("heartbeat can recreate a pruned session when recreateWith is supplied", () => {
+    const res = repo.heartbeat("sess-X", {
+      id: "sess-X",
+      project: "/repo",
+      branch: "feat/x",
+    });
+    expect(res.ok).toBe(true);
+    expect(res.recreated).toBe(true);
+    expect(repo.getSession("sess-X")).toBeDefined();
   });
 
   it("unregisterSession removes the row", () => {
     repo.registerSession({ id: "sess-A", project: "/repo" });
-    expect(repo.unregisterSession("sess-A")).toBe(true);
+    expect(repo.unregisterSession("sess-A")).toEqual({ removed: true });
     expect(repo.listSessions("/repo")).toHaveLength(0);
-    expect(repo.unregisterSession("sess-A")).toBe(false);
+    expect(repo.unregisterSession("sess-A")).toEqual({
+      removed: false,
+      reason: "session_not_found",
+    });
   });
 
   it("prunes dead sessions past the TTL when listing", () => {

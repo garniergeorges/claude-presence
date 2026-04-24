@@ -49,6 +49,6 @@ CREATE TABLE IF NOT EXISTS inbox_reads (
 );
 `;
 
-export const SESSION_TTL_MS = 2 * 60 * 1000;
+export const SESSION_TTL_MS = 10 * 60 * 1000;
 export const LOCK_DEFAULT_TTL_MS = 10 * 60 * 1000;
 export const INBOX_RETENTION_MS = 24 * 60 * 60 * 1000;

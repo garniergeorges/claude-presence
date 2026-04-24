@@ -54,13 +54,19 @@ export function lockTools(repo: Repository): McpTool[] {
                   intent: heldBySession.intent,
                 }
               : null,
+            ...(result.session_recreated
+              ? { session_recreated: true }
+              : {}),
           };
         }
 
         return {
           ok: true,
-          message: `Lock acquired on '${args.resource}'. Remember to resource_release when done.`,
+          message: result.session_recreated
+            ? `Lock acquired on '${args.resource}'. Note: your session had been pruned (TTL expired) and was silently re-registered — consider keeping a regular session_heartbeat.`
+            : `Lock acquired on '${args.resource}'. Remember to resource_release when done.`,
           lock: formatLock(result.lock!),
+          ...(result.session_recreated ? { session_recreated: true } : {}),
         };
       },
     },

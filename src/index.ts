@@ -10,7 +10,7 @@ import { inboxTools } from "./tools/inbox.js";
 import type { McpTool } from "./tools/helpers.js";
 
 const PACKAGE_NAME = "claude-presence";
-const PACKAGE_VERSION = "0.1.0";
+const PACKAGE_VERSION = "0.1.1";
 
 const SERVER_INSTRUCTIONS = `
 This server coordinates multiple Claude Code sessions running in parallel on the same machine.

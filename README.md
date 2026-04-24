@@ -34,6 +34,7 @@ When you run multiple Claude Code sessions on the same repo, they don't know abo
 - [CLI](#cli)
 - [Troubleshooting](#troubleshooting)
 - [How it compares](#how-it-compares)
+- [Security & trust model](#security--trust-model)
 - [Storage](#storage)
 - [Development](#development)
 - [Status](#status)
@@ -78,7 +79,7 @@ That's the whole loop. Everything below is detail.
 - **Slash commands** — `/register`, `/claim`, `/release`, `/presence` (no typing ceremony)
 - **CLI** — `claude-presence status` shows active sessions outside Claude Code
 - **Zero daemon** — SQLite-backed, no port, no background process
-- **TTL-based cleanup** — dead sessions (no heartbeat for 2 min) are removed automatically
+- **TTL-based cleanup** — dead sessions (no heartbeat for 10 min) are removed automatically
 
 ## Install
 
@@ -305,7 +306,7 @@ Slash commands are loaded at session start. Restart Claude Code after `cp comman
 `claude-presence` doesn't auto-register — you must call `/register` once per session. This is deliberate: sessions stay explicit and identifiable.
 
 **A lock is stuck because a session crashed.**
-Dead sessions are pruned after 2 min (no heartbeat). You can force-clean immediately with `claude-presence clear`, or force-release a specific lock with the `resource_release` MCP tool passing `force: true`.
+Dead sessions are pruned after 10 min (no heartbeat). You can force-clean immediately with `claude-presence clear`, or force-release a specific lock with the `resource_release` MCP tool passing `force: true`.
 
 **Hooks seem to break my existing GitKraken / custom hook setup.**
 See [Merging with existing hooks](#merging-with-existing-hooks). Each event holds an array of hooks; add yours without removing others.
@@ -324,6 +325,18 @@ See [Merging with existing hooks](#merging-with-existing-hooks). Each event hold
 
 Pick `claude-presence` if you want something small and focused on "don't let my sessions step on each other". Pick `mcp_agent_mail` if you want rich agent-to-agent workflows.
 
+## Security & trust model
+
+`claude-presence` is designed for **cooperating local sessions on a single developer machine**, not for adversarial multi-tenant use. Concretely:
+
+- The SQLite database lives in your home directory and is only reachable by processes running as you.
+- Session IDs and `from_session` fields are **self-declared** — the server doesn't authenticate them. A buggy or malicious local process could register as any ID or post broadcasts claiming to be another session.
+- Resource locks are **advisory**, not enforced. A session can ignore a held lock and push anyway. The value comes from every session agreeing to check first.
+
+This is fine for the intended use case (your own parallel Claude Code sessions cooperating) and explicitly not fine for running untrusted code on the same box. If you need cryptographic identity or server-side enforcement, this isn't the right tool.
+
+See [#1](https://github.com/garniergeorges/claude-presence/issues) track hardening ideas for future versions (e.g. deriving `from_session` from the MCP connection context instead of accepting it as an argument).
+
 ## Storage
 
 Data lives in `~/.claude-presence/state.db` (SQLite, WAL mode). Nothing is sent anywhere.
@@ -331,7 +344,7 @@ Data lives in `~/.claude-presence/state.db` (SQLite, WAL mode). Nothing is sent 
 Override the path with `CLAUDE_PRESENCE_DB=/custom/path.db`.
 
 Retention:
-- **Sessions**: pruned after 2 min without heartbeat.
+- **Sessions**: pruned after 10 min without heartbeat.
 - **Locks**: pruned when their TTL expires (default 10 min, configurable per-claim, max 24 h).
 - **Inbox**: pruned after 24 h.
 

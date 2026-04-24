@@ -34,6 +34,7 @@ Quand tu lances plusieurs sessions Claude Code sur le même dépôt, elles ne se
 - [CLI](#cli)
 - [Dépannage](#dépannage)
 - [Comparaison](#comparaison)
+- [Sécurité et modèle de confiance](#sécurité-et-modèle-de-confiance)
 - [Stockage](#stockage)
 - [Développement](#développement)
 - [Statut](#statut)
@@ -78,7 +79,7 @@ C'est toute la boucle. Tout le reste ci-dessous, c'est du détail.
 - **Commandes slash** — `/register`, `/claim`, `/release`, `/presence` (sans cérémonie de frappe)
 - **CLI** — `claude-presence status` montre les sessions actives hors Claude Code
 - **Zéro démon** — adossé à SQLite, sans port, sans processus en arrière-plan
-- **Nettoyage par TTL** — les sessions mortes (pas de heartbeat pendant 2 min) sont purgées automatiquement
+- **Nettoyage par TTL** — les sessions mortes (pas de heartbeat pendant 10 min) sont purgées automatiquement
 
 ## Installation
 
@@ -305,7 +306,7 @@ Les commandes slash sont chargées au démarrage de session. Redémarre Claude C
 `claude-presence` ne s'enregistre pas automatiquement — tu dois appeler `/register` une fois par session. C'est volontaire : les sessions restent explicites et identifiables.
 
 **Un verrou est bloqué parce qu'une session a crashé.**
-Les sessions mortes sont purgées après 2 min (pas de heartbeat). Tu peux forcer le nettoyage immédiat avec `claude-presence clear`, ou forcer la libération d'un verrou spécifique via l'outil MCP `resource_release` avec `force: true`.
+Les sessions mortes sont purgées après 10 min (pas de heartbeat). Tu peux forcer le nettoyage immédiat avec `claude-presence clear`, ou forcer la libération d'un verrou spécifique via l'outil MCP `resource_release` avec `force: true`.
 
 **Les hooks semblent casser ma config GitKraken / un hook maison.**
 Va voir [Cohabitation avec des hooks existants](#cohabitation-avec-des-hooks-existants). Chaque événement a un tableau de hooks ; ajoute le tien sans retirer les autres.
@@ -324,6 +325,18 @@ Va voir [Cohabitation avec des hooks existants](#cohabitation-avec-des-hooks-exi
 
 Choisis `claude-presence` si tu veux quelque chose de petit et focalisé sur "que mes sessions ne se marchent pas dessus". Choisis `mcp_agent_mail` si tu veux des flux agent-à-agent riches.
 
+## Sécurité et modèle de confiance
+
+`claude-presence` est conçu pour **des sessions locales coopératives sur une seule machine de développeur**, pas pour un usage multi-locataire adversarial. Concrètement :
+
+- La base SQLite vit dans ton répertoire home et n'est joignable que par les processus qui tournent sous ton utilisateur.
+- Les `session_id` et champs `from_session` sont **auto-déclarés** — le serveur ne les authentifie pas. Un processus local bogué ou malveillant pourrait s'enregistrer sous n'importe quel ID ou poster des broadcasts en se faisant passer pour une autre session.
+- Les verrous sur ressources sont **consultatifs**, pas imposés. Une session peut ignorer un verrou détenu et pousser quand même. La valeur vient de l'accord tacite : toutes les sessions vérifient avant d'agir.
+
+C'est acceptable pour l'usage prévu (tes propres sessions Claude Code parallèles qui coopèrent) et explicitement pas acceptable pour exécuter du code non-fiable sur la même machine. Si tu as besoin d'identité cryptographique ou d'enforcement côté serveur, ce n'est pas le bon outil.
+
+Voir [#1](https://github.com/garniergeorges/claude-presence/issues) pour suivre les pistes de durcissement des prochaines versions (p. ex. dériver `from_session` depuis le contexte de connexion MCP au lieu de l'accepter en argument).
+
 ## Stockage
 
 Les données vivent dans `~/.claude-presence/state.db` (SQLite, mode WAL). Rien n'est envoyé ailleurs.
@@ -331,7 +344,7 @@ Les données vivent dans `~/.claude-presence/state.db` (SQLite, mode WAL). Rien 
 Pour changer le chemin : `CLAUDE_PRESENCE_DB=/chemin/personnalisé.db`.
 
 Rétention :
-- **Sessions** : purgées après 2 min sans heartbeat.
+- **Sessions** : purgées après 10 min sans heartbeat.
 - **Verrous** : purgés à expiration du TTL (10 min par défaut, configurable par claim, max 24 h).
 - **Boîte aux lettres** : purgée après 24 h.
 
