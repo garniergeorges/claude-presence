@@ -1,5 +1,9 @@
 # claude-presence
 
+[![CI](https://github.com/garniergeorges/claude-presence/actions/workflows/ci.yml/badge.svg)](https://github.com/garniergeorges/claude-presence/actions/workflows/ci.yml)
+[![Licence: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Node >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
+
 <picture>
   <source media="(prefers-reduced-motion: no-preference)" srcset="./assets/banner.gif">
   <img alt="claude-presence — coordonne plusieurs sessions Claude Code sur le même dépôt" src="./assets/banner-static.png">
