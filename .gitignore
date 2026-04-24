@@ -11,3 +11,6 @@ dist/
 coverage/
 .vscode/
 .idea/
+
+# Private session notes — never committed
+.session-notes/
