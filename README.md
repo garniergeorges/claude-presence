@@ -1,0 +1,357 @@
+# claude-presence
+
+<picture>
+  <source media="(prefers-reduced-motion: no-preference)" srcset="./assets/banner.gif">
+  <img alt="claude-presence — coordinate multiple Claude Code sessions on the same repo" src="./assets/banner-static.png">
+</picture>
+
+> Minimal MCP server for inter-session coordination between parallel Claude Code instances.
+
+🇫🇷 [Version française](./README.fr.md)
+
+When you run multiple Claude Code sessions on the same repo, they don't know about each other. They step on each other's CI runs, push over each other, or duplicate work. `claude-presence` is a small MCP server that gives each session a view of the others — plus advisory locks on shared resources (CI, staging DB, ports, whatever you name).
+
+**Scope is deliberately small.** Presence + resource locks + a broadcast inbox. No git integration, no task orchestration, no web UI. If you need more, look at [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail).
+
+---
+
+## Table of contents
+
+- [Quick start](#quick-start-60-seconds)
+- [Features](#features)
+- [Install](#install)
+- [Configure](#configure)
+- [Verify it works](#verify-it-works)
+- [Slash commands](#slash-commands-recommended)
+- [Hooks (optional)](#hooks-optional)
+- [MCP tools exposed](#mcp-tools-exposed)
+- [CLI](#cli)
+- [Troubleshooting](#troubleshooting)
+- [How it compares](#how-it-compares)
+- [Storage](#storage)
+- [Development](#development)
+- [Status](#status)
+
+---
+
+## Quick start (60 seconds)
+
+```bash
+# 1. Install the package globally
+git clone https://github.com/garniergeorges/claude-presence
+cd claude-presence && npm install && npm run build && npm link
+
+# 2. Install the slash commands for every Claude Code session
+cp commands/*.md ~/.claude/commands/
+
+# 3. Add the MCP server to any project you want to coordinate
+cd /path/to/your/project
+cat > .mcp.json <<'EOF'
+{
+  "mcpServers": {
+    "claude-presence": { "type": "stdio", "command": "claude-presence-mcp" }
+  }
+}
+EOF
+
+# 4. Open Claude Code in that project and type:
+#    /register  → you're now visible to other sessions
+#    /presence  → see who else is working here
+#    /claim ci  → reserve the CI before you push
+```
+
+That's the whole loop. Everything below is detail.
+
+---
+
+## Features
+
+- **Presence registry** — each session registers itself with a branch and an intent; others see it
+- **Resource locks** — claim a named resource (`"ci"`, `"deploy:staging"`, `"port:3000"`) before you touch it; others get a clear "busy" response
+- **Broadcast inbox** — drop a short message that other sessions on the same project will see
+- **Slash commands** — `/register`, `/claim`, `/release`, `/presence` (no typing ceremony)
+- **CLI** — `claude-presence status` shows active sessions outside Claude Code
+- **Zero daemon** — SQLite-backed, no port, no background process
+- **TTL-based cleanup** — dead sessions (no heartbeat for 2 min) are removed automatically
+
+## Install
+
+### From source (current)
+
+```bash
+git clone https://github.com/garniergeorges/claude-presence
+cd claude-presence
+npm install
+npm run build
+npm link       # exposes claude-presence-mcp and claude-presence globally
+```
+
+### From npm (when published)
+
+```bash
+npm install -g claude-presence
+```
+
+Or invoke via `npx` directly from `.mcp.json` — no global install needed.
+
+## Configure
+
+Add `claude-presence` to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "claude-presence": {
+      "type": "stdio",
+      "command": "claude-presence-mcp"
+    }
+  }
+}
+```
+
+If you already have other MCP servers, just add this block alongside them — don't replace the whole file. Example with an existing `semgrep` entry:
+
+```json
+{
+  "mcpServers": {
+    "semgrep": {
+      "type": "stdio",
+      "command": "semgrep",
+      "args": ["mcp"]
+    },
+    "claude-presence": {
+      "type": "stdio",
+      "command": "claude-presence-mcp"
+    }
+  }
+}
+```
+
+### Install the slash commands (recommended)
+
+```bash
+cp commands/*.md ~/.claude/commands/
+```
+
+Now in any Claude Code session, you can type `/register`, `/claim <resource>`, `/release <resource>`, `/presence`.
+
+## Verify it works
+
+After configuring `.mcp.json`, restart Claude Code in the project, then check:
+
+```bash
+# The CLI and MCP binaries must be on PATH:
+which claude-presence           # → /opt/homebrew/bin/claude-presence (or similar)
+which claude-presence-mcp       # → same dir
+
+# The CLI runs:
+claude-presence status          # → "No active sessions." on first run
+```
+
+Inside Claude Code, type `/mcp`. You should see `claude-presence` listed with **9 tools**. If it's missing, see [Troubleshooting](#troubleshooting).
+
+Then try `/register test` — the session should register and the tool reply should list any other active sessions on this project.
+
+## Slash commands (recommended)
+
+No ceremony. Just type:
+
+| Command | What it does |
+|---|---|
+| `/register [intent]` | Register this session with optional intent (branch + cwd auto-detected). |
+| `/claim <resource> [reason]` | Claim a named resource lock. If busy, shows the holder instead of proceeding. |
+| `/release <resource>` | Release a lock you hold. |
+| `/presence` | Show other sessions + active locks on this project. |
+
+### Example workflow
+
+Session A starts work on `feat/login`:
+
+```
+/register fixing the login redirect bug
+```
+
+Session A is about to push and trigger CI:
+
+```
+/claim ci pushing feat/login
+→ ok: true, held until 10:05
+```
+
+Meanwhile, session B on `fix/nav` tries the same:
+
+```
+/claim ci pushing fix/nav
+→ ok: false — already held by session-a1b2 on feat/login since 09:55
+   Want to wait, broadcast, or abort?
+```
+
+Session A finishes CI and releases:
+
+```
+/release ci
+```
+
+Session B can now proceed.
+
+## Hooks (optional)
+
+The slash commands cover 99% of daily use. Hooks are optional polish for the last 1%:
+
+- **`hooks/session-start.sh`** runs when you open a new Claude Code session. It prints a short reminder so you remember to `/register` and think about resource locks before shared ops. It does **not** auto-register the session (by design — the slash command keeps it explicit).
+- **`hooks/user-prompt-submit.sh`** runs on every user prompt. It injects a one-line system message into the context when other sessions or locks are active on this project, so Claude Code stays aware without you asking.
+
+> The `UserPromptSubmit` hook shells out to the `claude-presence` CLI, so it must be on your `PATH` (handled by `npm link` or `npm install -g`). If the CLI is missing, the hook silently exits 0 — no breakage.
+
+### Enable them
+
+**Back up your settings first**:
+
+```bash
+cp ~/.claude/settings.json ~/.claude/settings.json.backup-$(date +%Y%m%d-%H%M%S)
+```
+
+Then merge the two hook entries into `~/.claude/settings.json`. If the `hooks` section doesn't exist yet:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "", "hooks": [
+        { "type": "command", "command": "/absolute/path/to/claude-presence/hooks/session-start.sh" }
+      ]}
+    ],
+    "UserPromptSubmit": [
+      { "matcher": "", "hooks": [
+        { "type": "command", "command": "/absolute/path/to/claude-presence/hooks/user-prompt-submit.sh" }
+      ]}
+    ]
+  }
+}
+```
+
+### Merging with existing hooks
+
+If another tool already registers hooks on `SessionStart` or `UserPromptSubmit` (GitKraken CLI, custom scripts, etc.), **don't overwrite them** — add a second entry in the same `hooks` array. Example coexisting with GitKraken:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "", "hooks": [
+        { "type": "command", "command": "\"/Users/you/Library/Application Support/GitKrakenCLI/gk\" ai hook run --host claude-code" },
+        { "type": "command", "command": "/absolute/path/to/claude-presence/hooks/session-start.sh" }
+      ]}
+    ],
+    "UserPromptSubmit": [
+      { "matcher": "", "hooks": [
+        { "type": "command", "command": "\"/Users/you/Library/Application Support/GitKrakenCLI/gk\" ai hook run --host claude-code" },
+        { "type": "command", "command": "/absolute/path/to/claude-presence/hooks/user-prompt-submit.sh" }
+      ]}
+    ]
+  }
+}
+```
+
+Claude Code runs every command in the array in order. Both tools get their turn.
+
+## MCP tools exposed
+
+| Tool | Purpose |
+|---|---|
+| `session_register` | Declare this session (project, branch, intent) |
+| `session_heartbeat` | Keep this session alive |
+| `session_unregister` | Clean exit |
+| `session_list` | List active sessions on the same project |
+| `resource_claim` | Acquire advisory lock on a named resource |
+| `resource_release` | Release a lock |
+| `resource_list` | List active locks |
+| `broadcast` | Post a message to the project inbox |
+| `read_inbox` | Read recent messages |
+
+## CLI
+
+```bash
+claude-presence status              # Show all active sessions
+claude-presence status --project .  # Filter to current project
+claude-presence locks               # Show active resource locks
+claude-presence clear               # Prune dead sessions and expired locks
+claude-presence path                # Print the SQLite DB path
+claude-presence help                # Show help
+```
+
+Add `--json` to any command for machine-readable output.
+
+## Troubleshooting
+
+**`/mcp` doesn't list `claude-presence`.**
+Make sure `.mcp.json` is at the project root (same directory as Claude Code was opened in), the `command` field matches an executable on `PATH`, and you **fully restarted** Claude Code after editing the file (not just reloaded).
+
+**`command not found: claude-presence-mcp`.**
+Run `which claude-presence-mcp`. If empty, run `npm link` again from the `claude-presence/` directory. If you installed via `npm install -g`, check that your npm global bin directory is on `PATH` (`npm config get prefix`).
+
+**The slash commands don't appear.**
+Slash commands are loaded at session start. Restart Claude Code after `cp commands/*.md ~/.claude/commands/`. Type `/` to see the list.
+
+**`claude-presence status` shows 0 sessions even though Claude Code is open.**
+`claude-presence` doesn't auto-register — you must call `/register` once per session. This is deliberate: sessions stay explicit and identifiable.
+
+**A lock is stuck because a session crashed.**
+Dead sessions are pruned after 2 min (no heartbeat). You can force-clean immediately with `claude-presence clear`, or force-release a specific lock with the `resource_release` MCP tool passing `force: true`.
+
+**Hooks seem to break my existing GitKraken / custom hook setup.**
+See [Merging with existing hooks](#merging-with-existing-hooks). Each event holds an array of hooks; add yours without removing others.
+
+## How it compares
+
+| | claude-presence | [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail) | [parallel-cc](https://github.com/frankbria/parallel-cc) |
+|---|---|---|---|
+| Presence registry | ✅ | ✅ | ✅ |
+| File-level locks | ❌ | ✅ | ✅ |
+| **Named resource locks** (CI, ports, DBs) | ✅ | ⚠️ (via file paths) | ❌ |
+| Messaging | minimal inbox | full mailbox | ❌ |
+| Git integration | ❌ | ✅ | ✅ (worktrees) |
+| Slash commands shipped | ✅ | ❌ | ❌ |
+| LOC | ~800 | several thousand | ~2000 |
+
+Pick `claude-presence` if you want something small and focused on "don't let my sessions step on each other". Pick `mcp_agent_mail` if you want rich agent-to-agent workflows.
+
+## Storage
+
+Data lives in `~/.claude-presence/state.db` (SQLite, WAL mode). Nothing is sent anywhere.
+
+Override the path with `CLAUDE_PRESENCE_DB=/custom/path.db`.
+
+Retention:
+- **Sessions**: pruned after 2 min without heartbeat.
+- **Locks**: pruned when their TTL expires (default 10 min, configurable per-claim, max 24 h).
+- **Inbox**: pruned after 24 h.
+
+## Development
+
+```bash
+npm run build      # compile TypeScript
+npm run dev        # watch mode
+node dist/index.js # run the MCP server directly (stdio)
+```
+
+Project layout:
+
+```
+src/
+  index.ts         # MCP server entrypoint (stdio)
+  db/              # SQLite schema + typed repository
+  tools/           # MCP tool implementations (presence, locks, inbox)
+  cli/             # claude-presence CLI
+hooks/             # SessionStart + UserPromptSubmit scripts
+commands/          # /register, /claim, /release, /presence slash commands
+examples/          # sample .mcp.json and settings.json hook snippets
+```
+
+## Status
+
+🚧 **v0.1 — early development.** API may change. Feedback and PRs welcome at [github.com/garniergeorges/claude-presence](https://github.com/garniergeorges/claude-presence).
+
+## License
+
+MIT

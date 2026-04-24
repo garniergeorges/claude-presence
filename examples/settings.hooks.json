@@ -1,0 +1,27 @@
+{
+  "_comment": "Example Claude Code settings.json fragment enabling claude-presence hooks. Adjust the absolute paths to match where you installed the repo or the package.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/claude-presence/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/claude-presence/hooks/user-prompt-submit.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

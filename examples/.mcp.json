@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "claude-presence": {
+      "command": "npx",
+      "args": ["-y", "claude-presence"]
+    }
+  }
+}
