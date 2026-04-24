@@ -20,6 +20,14 @@ export interface ClaimResult {
   ok: boolean;
   lock?: ResourceLockRow;
   held_by?: ResourceLockRow;
+  session_recreated?: boolean;
+}
+
+export interface HeartbeatResult {
+  ok: boolean;
+  reason?: "session_not_found";
+  advice?: string;
+  recreated?: boolean;
 }
 
 export class Repository {
@@ -84,16 +92,34 @@ export class Repository {
     return this.getSession(input.id)!;
   }
 
-  heartbeat(sessionId: string): boolean {
+  heartbeat(
+    sessionId: string,
+    recreateWith?: RegisterSessionInput,
+  ): HeartbeatResult {
     const stmt = this.db.prepare(
       "UPDATE sessions SET last_heartbeat = ? WHERE id = ?",
     );
-    return stmt.run(this.now(), sessionId).changes > 0;
+    const updated = stmt.run(this.now(), sessionId).changes > 0;
+    if (updated) return { ok: true };
+
+    if (recreateWith && recreateWith.id === sessionId) {
+      this.registerSession(recreateWith);
+      return { ok: true, recreated: true };
+    }
+    return {
+      ok: false,
+      reason: "session_not_found",
+      advice:
+        "Session was pruned (TTL expired) or never registered. Call session_register to re-create it.",
+    };
   }
 
-  unregisterSession(sessionId: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM sessions WHERE id = ?");
-    return stmt.run(sessionId).changes > 0;
+  unregisterSession(sessionId: string): { removed: boolean; reason?: string } {
+    const changes = this.db
+      .prepare("DELETE FROM sessions WHERE id = ?")
+      .run(sessionId).changes;
+    if (changes > 0) return { removed: true };
+    return { removed: false, reason: "session_not_found" };
   }
 
   getSession(sessionId: string): SessionRow | undefined {
@@ -129,6 +155,16 @@ export class Repository {
     const ttlMs = (input.ttl_seconds ?? LOCK_DEFAULT_TTL_MS / 1000) * 1000;
     const expires_at = now + ttlMs;
 
+    let sessionRecreated = false;
+    if (!this.getSession(input.session_id)) {
+      this.registerSession({
+        id: input.session_id,
+        project: input.project,
+        branch: input.branch ?? null,
+      });
+      sessionRecreated = true;
+    }
+
     const existing = this.db
       .prepare(
         "SELECT * FROM resource_locks WHERE project = ? AND resource = ?",
@@ -136,7 +172,11 @@ export class Repository {
       .get(input.project, input.resource) as ResourceLockRow | undefined;
 
     if (existing && existing.session_id !== input.session_id) {
-      return { ok: false, held_by: existing };
+      return {
+        ok: false,
+        held_by: existing,
+        session_recreated: sessionRecreated || undefined,
+      };
     }
 
     const stmt = this.db.prepare(`
@@ -165,7 +205,11 @@ export class Repository {
       )
       .get(input.project, input.resource) as ResourceLockRow;
 
-    return { ok: true, lock };
+    return {
+      ok: true,
+      lock,
+      session_recreated: sessionRecreated || undefined,
+    };
   }
 
   releaseResource(input: {
@@ -237,7 +281,7 @@ export class Repository {
     session_id: string;
     unread_only?: boolean;
     limit?: number;
-  }): InboxRow[] {
+  }): { messages: InboxRow[]; unread_total: number; total: number } {
     this.pruneOldInbox();
     const limit = input.limit ?? 50;
     let rows: InboxRow[];
@@ -273,6 +317,25 @@ export class Repository {
         .all(input.project, input.session_id, limit) as InboxRow[];
     }
 
+    // Counts are computed BEFORE marking as read, so the caller sees
+    // how many unread messages existed at the moment of the call.
+    const unreadCountRow = this.db
+      .prepare(
+        `
+        SELECT COUNT(*) AS n FROM inbox i
+        LEFT JOIN inbox_reads r
+          ON r.message_id = i.id AND r.session_id = ?
+        WHERE i.project = ? AND r.message_id IS NULL AND i.from_session != ?
+      `,
+      )
+      .get(input.session_id, input.project, input.session_id) as { n: number };
+
+    const totalCountRow = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM inbox WHERE project = ? AND from_session != ?`,
+      )
+      .get(input.project, input.session_id) as { n: number };
+
     if (rows.length > 0) {
       const markStmt = this.db.prepare(
         "INSERT OR IGNORE INTO inbox_reads (session_id, message_id, read_at) VALUES (?, ?, ?)",
@@ -284,6 +347,10 @@ export class Repository {
       tx(rows);
     }
 
-    return rows;
+    return {
+      messages: rows,
+      unread_total: unreadCountRow.n,
+      total: totalCountRow.n,
+    };
   }
 }

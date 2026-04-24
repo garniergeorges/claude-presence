@@ -127,4 +127,28 @@ describe("Repository — resource locks", () => {
     repo.unregisterSession("sess-A");
     expect(repo.listLocks("/repo")).toHaveLength(0);
   });
+
+  it("claimResource auto-recreates a pruned session instead of failing with FK error", () => {
+    // Session does NOT exist beforehand (simulating pruning)
+    const r = repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "ghost-session",
+      branch: "feat/recreate",
+    });
+    expect(r.ok).toBe(true);
+    expect(r.session_recreated).toBe(true);
+    expect(repo.getSession("ghost-session")).toBeDefined();
+    expect(repo.getSession("ghost-session")!.branch).toBe("feat/recreate");
+  });
+
+  it("claimResource does NOT set session_recreated when session already exists", () => {
+    const r = repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+    });
+    expect(r.ok).toBe(true);
+    expect(r.session_recreated).toBeUndefined();
+  });
 });

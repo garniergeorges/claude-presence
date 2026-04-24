@@ -21,22 +21,24 @@ describe("Repository — broadcast inbox", () => {
       from_session: "sess-A",
       message: "refactored auth module",
     });
-    const fromBPov = repo.readInbox({
+    const res = repo.readInbox({
       project: "/repo",
       session_id: "sess-B",
     });
-    expect(fromBPov).toHaveLength(1);
-    expect(fromBPov[0].from_session).toBe("sess-A");
-    expect(fromBPov[0].message).toBe("refactored auth module");
+    expect(res.messages).toHaveLength(1);
+    expect(res.messages[0].from_session).toBe("sess-A");
+    expect(res.messages[0].message).toBe("refactored auth module");
+    expect(res.total).toBe(1);
   });
 
   it("excludes the author's own messages", () => {
     repo.broadcast({ project: "/repo", from_session: "sess-A", message: "m1" });
-    const selfPov = repo.readInbox({
+    const res = repo.readInbox({
       project: "/repo",
       session_id: "sess-A",
     });
-    expect(selfPov).toHaveLength(0);
+    expect(res.messages).toHaveLength(0);
+    expect(res.total).toBe(0);
   });
 
   it("unread_only: true hides already-read messages", () => {
@@ -46,14 +48,16 @@ describe("Repository — broadcast inbox", () => {
       session_id: "sess-B",
       unread_only: true,
     });
-    expect(firstRead).toHaveLength(1);
+    expect(firstRead.messages).toHaveLength(1);
+    expect(firstRead.unread_total).toBe(1);
 
     const secondRead = repo.readInbox({
       project: "/repo",
       session_id: "sess-B",
       unread_only: true,
     });
-    expect(secondRead).toHaveLength(0);
+    expect(secondRead.messages).toHaveLength(0);
+    expect(secondRead.unread_total).toBe(0);
   });
 
   it("unread_only: false returns the full history", () => {
@@ -64,7 +68,8 @@ describe("Repository — broadcast inbox", () => {
       session_id: "sess-B",
       unread_only: false,
     });
-    expect(all).toHaveLength(1);
+    expect(all.messages).toHaveLength(1);
+    expect(all.total).toBe(1);
   });
 
   it("scopes inbox per project", () => {
@@ -73,8 +78,8 @@ describe("Repository — broadcast inbox", () => {
     repo.broadcast({ project: "/other", from_session: "sess-C", message: "there" });
 
     const repoInbox = repo.readInbox({ project: "/repo", session_id: "sess-B" });
-    expect(repoInbox).toHaveLength(1);
-    expect(repoInbox[0].message).toBe("here");
+    expect(repoInbox.messages).toHaveLength(1);
+    expect(repoInbox.messages[0].message).toBe("here");
   });
 
   it("preserves tags as an array when provided", () => {
@@ -84,7 +89,23 @@ describe("Repository — broadcast inbox", () => {
       message: "heads up",
       tags: ["warning", "ci"],
     });
-    const msgs = repo.readInbox({ project: "/repo", session_id: "sess-B" });
-    expect(msgs[0].tags).toBe('["warning","ci"]');
+    const res = repo.readInbox({ project: "/repo", session_id: "sess-B" });
+    expect(res.messages[0].tags).toBe('["warning","ci"]');
+  });
+
+  it("reports unread_total even when no messages are returned (already read)", () => {
+    repo.broadcast({ project: "/repo", from_session: "sess-A", message: "m1" });
+    repo.readInbox({ project: "/repo", session_id: "sess-B", unread_only: true });
+
+    // Second call with unread_only: empty messages, unread_total=0,
+    // but total=1 so caller can see history exists
+    const second = repo.readInbox({
+      project: "/repo",
+      session_id: "sess-B",
+      unread_only: true,
+    });
+    expect(second.messages).toHaveLength(0);
+    expect(second.unread_total).toBe(0);
+    expect(second.total).toBe(1);
   });
 });

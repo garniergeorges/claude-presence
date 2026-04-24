@@ -54,13 +54,29 @@ export function presenceTools(repo: Repository): McpTool[] {
     {
       name: "session_heartbeat",
       description:
-        "Refresh this session's last-seen timestamp. Call periodically (at most every 30s) so the session isn't pruned as dead (TTL: 2 min).",
+        "Refresh this session's last-seen timestamp. Call periodically (every minute or two) so the session isn't pruned as dead (TTL: 10 min). If the session was already pruned, supply the optional recreate_* fields to have the server silently re-register it.",
       inputShape: {
         session_id: z.string().min(1),
+        recreate_project: z
+          .string()
+          .optional()
+          .describe(
+            "If provided along with recreate_* fields, auto-recreate the session when it has been pruned.",
+          ),
+        recreate_branch: z.string().optional(),
+        recreate_intent: z.string().optional(),
       },
       handler: async (args) => {
-        const ok = repo.heartbeat(args.session_id);
-        return { ok, at: new Date().toISOString() };
+        const recreateWith = args.recreate_project
+          ? {
+              id: args.session_id,
+              project: args.recreate_project,
+              branch: args.recreate_branch ?? null,
+              intent: args.recreate_intent ?? null,
+            }
+          : undefined;
+        const result = repo.heartbeat(args.session_id, recreateWith);
+        return { ...result, at: new Date().toISOString() };
       },
     },
     {
@@ -71,8 +87,7 @@ export function presenceTools(repo: Repository): McpTool[] {
         session_id: z.string().min(1),
       },
       handler: async (args) => {
-        const removed = repo.unregisterSession(args.session_id);
-        return { removed };
+        return repo.unregisterSession(args.session_id);
       },
     },
     {
