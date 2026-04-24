@@ -13,7 +13,9 @@
 
 🇬🇧 [English version](./README.md)
 
-Quand tu lances plusieurs sessions Claude Code sur le même dépôt, elles ne se voient pas entre elles. Elles se marchent dessus sur la CI, poussent par-dessus les commits des autres, ou refont le même travail. `claude-presence` est un petit serveur MCP qui donne à chaque session une vue des autres — plus des verrous consultatifs sur les ressources partagées (CI, base de staging, ports, tout ce que tu nommes).
+Quand tu lances plusieurs sessions Claude Code sur le même dépôt, elles ne se voient pas entre elles. Elles se marchent dessus sur la CI, poussent par-dessus les commits des autres, ou refont le même travail. `claude-presence` est un petit serveur MCP qui donne à chaque session une vue des autres, plus des verrous consultatifs sur les ressources partagées (CI, base de staging, ports, tout ce que tu nommes).
+
+> **Modèle mental.** Les sessions ne se parlent pas directement : chaque session Claude Code est un processus isolé. `claude-presence` leur fournit un tableau d'affichage partagé : chaque session voit qui d'autre travaille, quelles ressources sont verrouillées, et peut poster de courts messages que les autres liront quand elles feront leur check. C'est une couche de coordination légère, pas un pont de messagerie instantanée.
 
 **Le périmètre est volontairement restreint.** Présence + verrous sur ressources + boîte aux lettres courte. Pas d'intégration git, pas d'orchestration de tâches, pas d'UI web. Si tu veux plus, regarde [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail).
 
@@ -163,9 +165,11 @@ Sans cérémonie. Tu tapes :
 | Commande | Ce qu'elle fait |
 |---|---|
 | `/register [intention]` | Enregistre la session avec une intention optionnelle (branche et cwd détectés automatiquement). |
+| `/presence` | Montre les autres sessions et les verrous actifs sur ce projet. |
 | `/claim <ressource> [raison]` | Réserve un verrou de ressource nommée. Si occupée, montre le détenteur au lieu de poursuivre. |
 | `/release <ressource>` | Libère un verrou que tu détiens. |
-| `/presence` | Montre les autres sessions et les verrous actifs sur ce projet. |
+| `/broadcast <message>` | Poste un court message dans la boîte du projet. Les autres sessions le verront à leur prochain `/inbox`. |
+| `/inbox [all\|unread]` | Lit les messages des autres sessions. Par défaut : non lus uniquement. |
 
 ### Exemple de flux
 

@@ -13,7 +13,9 @@
 
 🇫🇷 [Version française](./README.fr.md)
 
-When you run multiple Claude Code sessions on the same repo, they don't know about each other. They step on each other's CI runs, push over each other, or duplicate work. `claude-presence` is a small MCP server that gives each session a view of the others — plus advisory locks on shared resources (CI, staging DB, ports, whatever you name).
+When you run multiple Claude Code sessions on the same repo, they don't know about each other. They step on each other's CI runs, push over each other, or duplicate work. `claude-presence` is a small MCP server that gives each session a view of the others, plus advisory locks on shared resources (CI, staging DB, ports, whatever you name).
+
+> **Mental model.** Sessions don't talk directly — each Claude Code session is an isolated process. `claude-presence` gives them a shared bulletin board: each session sees who else is working, what resources are claimed, and can post short messages that others will read when they check in. Think of it as a lightweight coordination layer, not a chat bridge.
 
 **Scope is deliberately small.** Presence + resource locks + a broadcast inbox. No git integration, no task orchestration, no web UI. If you need more, look at [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail).
 
@@ -163,9 +165,11 @@ No ceremony. Just type:
 | Command | What it does |
 |---|---|
 | `/register [intent]` | Register this session with optional intent (branch + cwd auto-detected). |
+| `/presence` | Show other sessions + active locks on this project. |
 | `/claim <resource> [reason]` | Claim a named resource lock. If busy, shows the holder instead of proceeding. |
 | `/release <resource>` | Release a lock you hold. |
-| `/presence` | Show other sessions + active locks on this project. |
+| `/broadcast <message>` | Post a short message to the project inbox. Other sessions see it on their next `/inbox`. |
+| `/inbox [all\|unread]` | Read messages from other sessions. Default: unread only. |
 
 ### Example workflow
 
