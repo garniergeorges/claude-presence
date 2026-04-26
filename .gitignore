@@ -12,12 +12,10 @@ coverage/
 .vscode/
 .idea/
 
-# Private session notes — never committed
-.session-notes/
-
 # Claude Code / MCP — local config not meant to be shared.
 .claude/
 .mcp.json
+CLAUDE.md
 CLAUDE.local.md
 .cursorrules
 .cursor/
