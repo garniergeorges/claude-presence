@@ -1,6 +1,6 @@
 {
   "name": "claude-presence",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Minimal MCP server for inter-session coordination between parallel Claude Code instances: presence registry, resource locks, broadcast inbox.",
   "type": "module",
   "bin": {
