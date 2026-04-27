@@ -3,6 +3,9 @@ import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { openDatabase } from "../db/index.js";
 import { Repository } from "../db/repository.js";
+import { TokenStore } from "../auth/tokens.js";
+import { AuditLogger } from "../auth/audit.js";
+import { TokenAuthenticator, writeAuthError } from "../auth/middleware.js";
 import { createMcpHttpHandler } from "./transport.js";
 import { handleHealth } from "./health.js";
 import { log } from "./logger.js";
@@ -18,18 +21,20 @@ This server coordinates Claude Code sessions across machines via HTTP MCP.
 
 At session start, call session_register with a stable session_id and project path.
 Before touching shared resources, call resource_claim. Heartbeat every 30-60s.
-The data is stored locally in SQLite. No telemetry, no cloud.
+Data stored locally in SQLite. No telemetry, no cloud.
 `.trim();
 
 interface CliOptions {
   port: number;
   host: string;
+  noAuth: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
   const args = argv.slice(2);
   let port = Number(process.env.PORT) || DEFAULT_PORT;
   let host = process.env.HOST || DEFAULT_HOST;
+  let noAuth = process.env.CLAUDE_PRESENCE_NO_AUTH === "1";
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -37,6 +42,8 @@ function parseArgs(argv: string[]): CliOptions {
       port = Number(args[++i]);
     } else if (a === "--host" || a === "-h") {
       host = args[++i];
+    } else if (a === "--no-auth") {
+      noAuth = true;
     } else if (a === "--help") {
       printHelp();
       process.exit(0);
@@ -48,7 +55,7 @@ function parseArgs(argv: string[]): CliOptions {
     process.exit(1);
   }
 
-  return { port, host };
+  return { port, host, noAuth };
 }
 
 function printHelp() {
@@ -60,6 +67,7 @@ Usage:
 Options:
   --port, -p <number>    HTTP port to bind (default: ${DEFAULT_PORT}, env PORT)
   --host, -h <string>    Host to bind (default: ${DEFAULT_HOST}, env HOST)
+  --no-auth              Disable bearer-token auth (DANGEROUS; localhost only)
   --help                 Show this help
 
 Endpoints:
@@ -67,23 +75,53 @@ Endpoints:
   GET  /healthz          Health check (200 OK + DB status)
 
 Environment:
-  CLAUDE_PRESENCE_DB     Override SQLite DB path
-  LOG_LEVEL              debug | info (default) | warn | error
+  CLAUDE_PRESENCE_DB         Override SQLite DB path
+  CLAUDE_PRESENCE_NO_AUTH    Set to "1" to skip auth (same as --no-auth)
+  LOG_LEVEL                  debug | info (default) | warn | error
+
+Token management:
+  claude-presence-server token create --name <name> --scope <read|write|admin>
+  claude-presence-server token list
+  claude-presence-server token revoke --name <name>
 `);
 }
 
 async function main() {
   const opts = parseArgs(process.argv);
 
+  // Sub-command dispatch: "token <action>"
+  if (process.argv[2] === "token") {
+    const { runTokenCommand } = await import("../cli/admin.js");
+    await runTokenCommand(process.argv.slice(3));
+    return;
+  }
+
   const db = openDatabase();
   const repo = new Repository(db);
   repo.pruneAll();
+
+  const store = new TokenStore(db);
+  const audit = new AuditLogger(db);
+  const authenticator = new TokenAuthenticator(store);
+
+  if (!opts.noAuth) {
+    if (store.countActiveAdmins() === 0) {
+      console.error(
+        `\n${PACKAGE_NAME}-server refuses to start: no active admin token in the database.\n\n` +
+        `Create one with:\n` +
+        `  ${PACKAGE_NAME}-server token create --name <yourname> --scope admin\n\n` +
+        `Or start in unauthenticated mode (NOT recommended) with --no-auth.\n`,
+      );
+      process.exit(1);
+    }
+  }
 
   const mcpHandler = createMcpHttpHandler({
     repo,
     serverName: PACKAGE_NAME,
     serverVersion: PACKAGE_VERSION,
     instructions: SERVER_INSTRUCTIONS,
+    audit: opts.noAuth ? undefined : audit,
   });
 
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -95,7 +133,16 @@ async function main() {
     }
 
     if (url === "/mcp" || url.startsWith("/mcp?")) {
-      await mcpHandler(req, res);
+      if (opts.noAuth) {
+        await mcpHandler(req, res);
+        return;
+      }
+      const authResult = authenticator.authenticate(req);
+      if (!authResult.ok || !authResult.context) {
+        writeAuthError(res, authResult.status ?? 401, authResult.error ?? "unauthorized");
+        return;
+      }
+      await mcpHandler(req, res, authResult.context);
       return;
     }
 
@@ -114,6 +161,7 @@ async function main() {
     version: PACKAGE_VERSION,
     host: opts.host,
     port: boundPort,
+    auth: opts.noAuth ? "disabled" : "bearer",
   });
 
   const shutdown = async (signal: string) => {

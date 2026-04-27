@@ -4,11 +4,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Repository } from "../db/repository.js";
 import { registerAllTools } from "../tools/registry.js";
+import { registerGuardedTools, type GuardedToolContext } from "../auth/tool-guard.js";
+import type { AuditLogger } from "../auth/audit.js";
+import type { AuthContext } from "../auth/middleware.js";
 import { log } from "./logger.js";
 
 interface ServerEntry {
   server: McpServer;
   transport: StreamableHTTPServerTransport;
+  /** Mutable: updated on every authenticated request before handleRequest */
+  currentAuth: AuthContext | null;
 }
 
 export interface McpHttpHandlerOptions {
@@ -16,27 +21,56 @@ export interface McpHttpHandlerOptions {
   serverName: string;
   serverVersion: string;
   instructions?: string;
+  /** When set, all tool calls are guarded by this auth context provider */
+  audit?: AuditLogger;
 }
 
 /**
  * Creates an HTTP handler that multiplexes MCP sessions over Streamable HTTP.
  * Each MCP session gets its own McpServer + transport pair, keyed by the
  * mcp-session-id header (set by the SDK on the initialize response).
+ *
+ * Auth: when `audit` is supplied, tools are wrapped with permission checks.
+ * The caller must set `entry.currentAuth` before invoking handleRequest.
  */
 export function createMcpHttpHandler(options: McpHttpHandlerOptions) {
   const sessions = new Map<string, ServerEntry>();
+  const guarded = options.audit !== undefined;
 
   function buildEntry(): ServerEntry {
     const server = new McpServer(
       { name: options.serverName, version: options.serverVersion },
       options.instructions ? { instructions: options.instructions } : {},
     );
-    registerAllTools(server, options.repo);
+
+    const entry: ServerEntry = {
+      server,
+      transport: undefined as unknown as StreamableHTTPServerTransport,
+      currentAuth: null,
+    };
+
+    if (guarded && options.audit) {
+      registerGuardedTools(server, options.repo, () => {
+        if (!entry.currentAuth) return null;
+        const ctx: GuardedToolContext = {
+          permissions: {
+            scope: entry.currentAuth.scope,
+            toolOverrides: entry.currentAuth.toolOverrides,
+          },
+          tokenId: entry.currentAuth.token.id,
+          ipAddress: entry.currentAuth.ipAddress,
+          audit: options.audit!,
+        };
+        return ctx;
+      });
+    } else {
+      registerAllTools(server, options.repo);
+    }
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sessionId: string) => {
-        sessions.set(sessionId, { server, transport });
+        sessions.set(sessionId, entry);
         log.debug("session initialized", { sessionId });
       },
     });
@@ -56,12 +90,14 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions) {
       });
     };
 
+    entry.transport = transport;
+
     server.connect(transport).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       log.error("server connect failed", { message });
     });
 
-    return { server, transport };
+    return entry;
   }
 
   async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -84,6 +120,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions) {
   return async function handle(
     req: IncomingMessage,
     res: ServerResponse,
+    auth?: AuthContext,
   ): Promise<void> {
     try {
       const sessionId = (req.headers["mcp-session-id"] as string | undefined) || undefined;
@@ -92,8 +129,11 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions) {
       if (sessionId && sessions.has(sessionId)) {
         entry = sessions.get(sessionId);
       } else {
-        // New session (or stateless POST). The transport will allocate the id.
         entry = buildEntry();
+      }
+
+      if (entry) {
+        entry.currentAuth = auth ?? null;
       }
 
       const body = req.method === "POST" ? await readBody(req) : undefined;
@@ -109,11 +149,4 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions) {
       }
     }
   };
-}
-
-export function activeSessionCount(handler: ReturnType<typeof createMcpHttpHandler>): number {
-  // Session count is internal to the closure; this helper is currently a stub
-  // for future metrics instrumentation. Kept as a hook for tests.
-  void handler;
-  return -1;
 }

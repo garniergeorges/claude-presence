@@ -34,7 +34,7 @@ class HttpMcpClient {
   private ready: Promise<void>;
 
   constructor(dbPath: string) {
-    this.proc = spawn("node", ["dist/server/index.js", "--port", "0"], {
+    this.proc = spawn("node", ["dist/server/index.js", "--port", "0", "--no-auth"], {
       env: { ...process.env, CLAUDE_PRESENCE_DB: dbPath, LOG_LEVEL: "info" },
       stdio: ["pipe", "pipe", "pipe"],
     });

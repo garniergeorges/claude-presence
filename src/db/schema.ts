@@ -47,6 +47,35 @@ CREATE TABLE IF NOT EXISTS inbox_reads (
   read_at INTEGER NOT NULL,
   PRIMARY KEY (session_id, message_id)
 );
+
+CREATE TABLE IF NOT EXISTS team_tokens (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  hashed_token TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('read', 'write', 'admin')),
+  tool_overrides TEXT,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked_at INTEGER,
+  notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tokens_name ON team_tokens(name);
+CREATE INDEX IF NOT EXISTS idx_tokens_hash ON team_tokens(hashed_token);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp INTEGER NOT NULL,
+  token_id TEXT,
+  tool_name TEXT NOT NULL,
+  args_hash TEXT,
+  result_status TEXT NOT NULL CHECK (result_status IN ('ok', 'error', 'denied')),
+  ip_address TEXT,
+  duration_ms INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_token ON audit_log(token_id);
 `;
 
 export const SESSION_TTL_MS = 10 * 60 * 1000;
