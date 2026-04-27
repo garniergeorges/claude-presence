@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-presence
+  labels:
+    app.kubernetes.io/name: claude-presence
+spec:
+  type: ClusterIP            # Add an Ingress (or LoadBalancer) for external traffic.
+  selector:
+    app.kubernetes.io/name: claude-presence
+  ports:
+    - name: http
+      port: 3471
+      targetPort: http
+      protocol: TCP

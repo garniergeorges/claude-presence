@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-presence
+  labels:
+    app.kubernetes.io/name: claude-presence
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1                # single writer (SQLite). For HA, see roadmap (Postgres backend).
+  strategy:
+    type: Recreate           # avoid two pods writing the SQLite volume simultaneously
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: claude-presence
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: claude-presence
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: server
+          image: ghcr.io/garniergeorges/claude-presence:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3471
+          env:
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3471"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: CLAUDE_PRESENCE_DB
+              value: "/var/lib/claude-presence/state.db"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/claude-presence
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: claude-presence-data
+        - name: tmp
+          emptyDir: {}

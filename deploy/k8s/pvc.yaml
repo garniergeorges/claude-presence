@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: claude-presence-data
+  labels:
+    app.kubernetes.io/name: claude-presence
+spec:
+  accessModes:
+    - ReadWriteOnce          # SQLite is single-writer, RWO is correct
+  resources:
+    requests:
+      storage: 1Gi
+  # Set storageClassName explicitly if your cluster's default is not suitable.
+  # storageClassName: standard
