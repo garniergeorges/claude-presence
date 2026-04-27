@@ -99,7 +99,7 @@ jobs:
 
       - name: Scan with Trivy (PR)
         if: github.event_name == 'pull_request'
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: claude-presence:pr-${{ github.event.pull_request.number }}
           format: table
@@ -109,7 +109,7 @@ jobs:
 
       - name: Scan with Trivy (main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           format: sarif
