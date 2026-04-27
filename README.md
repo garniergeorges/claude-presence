@@ -77,9 +77,10 @@ That's the whole loop. Everything below is detail.
 - **Presence registry** — each session registers itself with a branch and an intent; others see it
 - **Resource locks** — claim a named resource (`"ci"`, `"deploy:staging"`, `"port:3000"`) before you touch it; others get a clear "busy" response
 - **Broadcast inbox** — drop a short message that other sessions on the same project will see
-- **Slash commands** — `/register`, `/claim`, `/release`, `/presence` (no typing ceremony)
+- **Slash commands** — `/register`, `/presence`, `/claim`, `/release`, `/broadcast`, `/inbox` (no typing ceremony)
 - **CLI** — `claude-presence status` shows active sessions outside Claude Code
-- **Zero daemon** — SQLite-backed, no port, no background process
+- **Zero daemon (stdio mode)** — SQLite-backed, no port, no background process for solo / single-machine use
+- **Team mode (v0.2+)** — optional self-hosted HTTP server with bearer-token auth and RBAC for coordination across machines
 - **TTL-based cleanup** — dead sessions (no heartbeat for 10 min) are removed automatically
 
 ## Install
@@ -91,7 +92,8 @@ git clone https://github.com/garniergeorges/claude-presence
 cd claude-presence
 npm install
 npm run build
-npm link       # exposes claude-presence-mcp and claude-presence globally
+npm link       # exposes claude-presence (CLI), claude-presence-mcp (stdio),
+               # and claude-presence-server (HTTP, v0.2+) globally
 ```
 
 ### From npm (when published)
@@ -141,7 +143,7 @@ If you already have other MCP servers, just add this block alongside them — do
 cp commands/*.md ~/.claude/commands/
 ```
 
-Now in any Claude Code session, you can type `/register`, `/claim <resource>`, `/release <resource>`, `/presence`.
+Now in any Claude Code session, you can type `/register`, `/presence`, `/claim <resource>`, `/release <resource>`, `/broadcast <message>`, `/inbox`.
 
 ## Verify it works
 
@@ -322,7 +324,9 @@ See [Merging with existing hooks](#merging-with-existing-hooks). Each event hold
 | Messaging | minimal inbox | full mailbox | ❌ |
 | Git integration | ❌ | ✅ | ✅ (worktrees) |
 | Slash commands shipped | ✅ | ❌ | ❌ |
-| LOC | ~800 | several thousand | ~2000 |
+| **Team mode** (cross-machine, self-hosted) | ✅ HTTP + RBAC | ❌ | ❌ |
+| Docker image (multi-arch, signed) | ✅ | ❌ | ❌ |
+| LOC | ~2700 | several thousand | ~2000 |
 
 Pick `claude-presence` if you want something small and focused on "don't let my sessions step on each other". Pick `mcp_agent_mail` if you want rich agent-to-agent workflows.
 
@@ -354,35 +358,56 @@ Data lives in `~/.claude-presence/state.db` (SQLite, WAL mode). Nothing is sent 
 
 Override the path with `CLAUDE_PRESENCE_DB=/custom/path.db`.
 
+Tables:
+- `sessions`, `resource_locks`, `inbox`, `inbox_reads` — coordination state
+- `team_tokens`, `audit_log` — only used by `claude-presence-server` (team mode v0.2+)
+
 Retention:
 - **Sessions**: pruned after 10 min without heartbeat.
 - **Locks**: pruned when their TTL expires (default 10 min, configurable per-claim, max 24 h).
 - **Inbox**: pruned after 24 h.
+- **Audit log**: kept indefinitely; query and prune manually if needed.
 
 ## Development
 
 ```bash
-npm run build      # compile TypeScript
-npm run dev        # watch mode
-node dist/index.js # run the MCP server directly (stdio)
+npm run build               # compile TypeScript
+npm run dev                 # watch mode
+npm test                    # vitest, 69 tests, ~5s
+node dist/index.js          # run the stdio MCP server (claude-presence-mcp)
+node dist/server/index.js   # run the HTTP server (claude-presence-server, v0.2+)
 ```
 
 Project layout:
 
 ```
 src/
-  index.ts         # MCP server entrypoint (stdio)
-  db/              # SQLite schema + typed repository
-  tools/           # MCP tool implementations (presence, locks, inbox)
-  cli/             # claude-presence CLI
-hooks/             # SessionStart + UserPromptSubmit scripts
-commands/          # /register, /claim, /release, /presence slash commands
-examples/          # sample .mcp.json and settings.json hook snippets
+  index.ts            # stdio MCP server entrypoint
+  db/                 # SQLite schema + typed repository
+  tools/              # MCP tool implementations (presence, locks, inbox)
+  cli/                # claude-presence CLI + token admin sub-command
+  auth/               # bearer-token auth, RBAC, audit log (v0.2+)
+  server/             # HTTP entrypoint, transport, health, logger (v0.2+)
+hooks/                # SessionStart + UserPromptSubmit scripts
+commands/             # 6 slash commands (register, presence, claim, release, broadcast, inbox)
+examples/             # sample .mcp.json and settings.json hook snippets
+deploy/               # Dockerfile-based deployments for team mode
+  docker-compose.yml          # localhost variant
+  docker-compose.caddy.yml    # public domain + auto HTTPS
+  Caddyfile.example
+  k8s/                        # Deployment + Service + PVC + Secret example
+docs/
+  team-mode.md / .fr.md       # bilingual deploy guide
+.github/workflows/
+  ci.yml                      # build + test on Ubuntu + macOS x Node 18/20/22
+  docker.yml                  # buildx multi-arch + cosign + Trivy (v0.2+)
 ```
 
 ## Status
 
-🚧 **v0.1 — early development.** API may change. Feedback and PRs welcome at [github.com/garniergeorges/claude-presence](https://github.com/garniergeorges/claude-presence).
+**v0.2 — team mode.** The stdio MCP server is stable; the HTTP team-mode server is new and the auth/RBAC surface may still evolve based on feedback. Postgres backend planned for v0.3 (currently SQLite only).
+
+Feedback and PRs welcome at [github.com/garniergeorges/claude-presence](https://github.com/garniergeorges/claude-presence).
 
 ## License
 

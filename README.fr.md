@@ -77,9 +77,10 @@ C'est toute la boucle. Tout le reste ci-dessous, c'est du détail.
 - **Registre de présence** — chaque session s'enregistre avec sa branche et son intention ; les autres la voient
 - **Verrous sur ressources** — réserve une ressource nommée (`"ci"`, `"deploy:staging"`, `"port:3000"`) avant d'y toucher ; les autres obtiennent une réponse claire "occupée"
 - **Boîte aux lettres** — dépose un court message visible par les autres sessions sur le même projet
-- **Commandes slash** — `/register`, `/claim`, `/release`, `/presence` (sans cérémonie de frappe)
+- **Commandes slash** — `/register`, `/presence`, `/claim`, `/release`, `/broadcast`, `/inbox` (sans cérémonie de frappe)
 - **CLI** — `claude-presence status` montre les sessions actives hors Claude Code
-- **Zéro démon** — adossé à SQLite, sans port, sans processus en arrière-plan
+- **Zéro démon (mode stdio)** — adossé à SQLite, sans port, sans processus en arrière-plan pour l'usage solo / mono-machine
+- **Mode équipe (v0.2+)** — serveur HTTP auto-hébergé optionnel avec auth bearer-token et RBAC pour coordonner plusieurs machines
 - **Nettoyage par TTL** — les sessions mortes (pas de heartbeat pendant 10 min) sont purgées automatiquement
 
 ## Installation
@@ -91,7 +92,8 @@ git clone https://github.com/garniergeorges/claude-presence
 cd claude-presence
 npm install
 npm run build
-npm link       # expose claude-presence-mcp et claude-presence globalement
+npm link       # expose claude-presence (CLI), claude-presence-mcp (stdio),
+               # et claude-presence-server (HTTP, v0.2+) globalement
 ```
 
 ### Depuis npm (quand publié)
@@ -141,7 +143,7 @@ Si tu as déjà d'autres serveurs MCP, ajoute juste ce bloc à côté — ne rem
 cp commands/*.md ~/.claude/commands/
 ```
 
-Dans toute session Claude Code, tu peux maintenant taper `/register`, `/claim <ressource>`, `/release <ressource>`, `/presence`.
+Dans toute session Claude Code, tu peux maintenant taper `/register`, `/presence`, `/claim <ressource>`, `/release <ressource>`, `/broadcast <message>`, `/inbox`.
 
 ## Vérifier que ça marche
 
@@ -322,7 +324,9 @@ Va voir [Cohabitation avec des hooks existants](#cohabitation-avec-des-hooks-exi
 | Messagerie | boîte minimale | boîte complète | ❌ |
 | Intégration git | ❌ | ✅ | ✅ (worktrees) |
 | Commandes slash fournies | ✅ | ❌ | ❌ |
-| LOC | ~800 | plusieurs milliers | ~2000 |
+| **Mode équipe** (multi-machine, auto-hébergé) | ✅ HTTP + RBAC | ❌ | ❌ |
+| Image Docker (multi-arch, signée) | ✅ | ❌ | ❌ |
+| LOC | ~2700 | plusieurs milliers | ~2000 |
 
 Choisis `claude-presence` si tu veux quelque chose de petit et focalisé sur "que mes sessions ne se marchent pas dessus". Choisis `mcp_agent_mail` si tu veux des flux agent-à-agent riches.
 
@@ -354,35 +358,56 @@ Les données vivent dans `~/.claude-presence/state.db` (SQLite, mode WAL). Rien 
 
 Pour changer le chemin : `CLAUDE_PRESENCE_DB=/chemin/personnalisé.db`.
 
+Tables :
+- `sessions`, `resource_locks`, `inbox`, `inbox_reads` — état de coordination
+- `team_tokens`, `audit_log` — utilisées uniquement par `claude-presence-server` (mode équipe v0.2+)
+
 Rétention :
 - **Sessions** : purgées après 10 min sans heartbeat.
 - **Verrous** : purgés à expiration du TTL (10 min par défaut, configurable par claim, max 24 h).
 - **Boîte aux lettres** : purgée après 24 h.
+- **Audit log** : conservé indéfiniment ; à requêter et purger manuellement si besoin.
 
 ## Développement
 
 ```bash
-npm run build      # compile TypeScript
-npm run dev        # mode watch
-node dist/index.js # lance le serveur MCP directement (stdio)
+npm run build               # compile TypeScript
+npm run dev                 # mode watch
+npm test                    # vitest, 69 tests, ~5 s
+node dist/index.js          # lance le serveur MCP stdio (claude-presence-mcp)
+node dist/server/index.js   # lance le serveur HTTP (claude-presence-server, v0.2+)
 ```
 
 Arborescence :
 
 ```
 src/
-  index.ts         # point d'entrée du serveur MCP (stdio)
-  db/              # schéma SQLite et repository typé
-  tools/           # implémentations des outils MCP (présence, verrous, boîte)
-  cli/             # CLI claude-presence
-hooks/             # scripts SessionStart et UserPromptSubmit
-commands/          # commandes slash /register, /claim, /release, /presence
-examples/          # .mcp.json d'exemple et extraits settings.json
+  index.ts            # point d'entrée du serveur MCP stdio
+  db/                 # schéma SQLite et repository typé
+  tools/              # implémentations des outils MCP (présence, verrous, boîte)
+  cli/                # CLI claude-presence + sous-commande token admin
+  auth/               # auth bearer-token, RBAC, journal d'audit (v0.2+)
+  server/             # entrypoint HTTP, transport, health, logger (v0.2+)
+hooks/                # scripts SessionStart et UserPromptSubmit
+commands/             # 6 commandes slash (register, presence, claim, release, broadcast, inbox)
+examples/             # .mcp.json d'exemple et extraits settings.json
+deploy/               # déploiements à base de Dockerfile pour le mode équipe
+  docker-compose.yml          # variante localhost
+  docker-compose.caddy.yml    # domaine public + HTTPS automatique
+  Caddyfile.example
+  k8s/                        # Deployment + Service + PVC + Secret d'exemple
+docs/
+  team-mode.md / .fr.md       # guide de déploiement bilingue
+.github/workflows/
+  ci.yml                      # build + test sur Ubuntu + macOS x Node 18/20/22
+  docker.yml                  # buildx multi-arch + cosign + Trivy (v0.2+)
 ```
 
 ## Statut
 
-🚧 **v0.1 — développement initial.** L'API peut changer. Retours et PRs bienvenus sur [github.com/garniergeorges/claude-presence](https://github.com/garniergeorges/claude-presence).
+**v0.2 — mode équipe.** Le serveur MCP stdio est stable ; le serveur HTTP du mode équipe est nouveau et la surface d'auth/RBAC peut encore évoluer selon les retours. Backend Postgres prévu pour v0.3 (actuellement SQLite uniquement).
+
+Retours et PRs bienvenus sur [github.com/garniergeorges/claude-presence](https://github.com/garniergeorges/claude-presence).
 
 ## Licence
 
