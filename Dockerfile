@@ -22,19 +22,18 @@ RUN npm prune --omit=dev
 # ---- Runtime stage ----
 FROM node:22-alpine AS runtime
 
-# wget for healthcheck, ca-certificates for outbound TLS if ever needed
+# wget for healthcheck, ca-certificates for outbound TLS if ever needed.
+# The base image already provides a `node` user (uid 1000); we reuse it.
 RUN apk add --no-cache wget ca-certificates && \
-    addgroup -g 1000 cp && \
-    adduser -D -u 1000 -G cp cp && \
     mkdir -p /var/lib/claude-presence && \
-    chown -R cp:cp /var/lib/claude-presence
+    chown -R node:node /var/lib/claude-presence
 
 WORKDIR /app
-COPY --from=builder --chown=cp:cp /app/dist ./dist
-COPY --from=builder --chown=cp:cp /app/node_modules ./node_modules
-COPY --from=builder --chown=cp:cp /app/package.json ./
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/package.json ./
 
-USER cp
+USER node
 
 ENV NODE_ENV=production
 ENV CLAUDE_PRESENCE_DB=/var/lib/claude-presence/state.db
