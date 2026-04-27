@@ -34,6 +34,7 @@ When you run multiple Claude Code sessions on the same repo, they don't know abo
 - [CLI](#cli)
 - [Troubleshooting](#troubleshooting)
 - [How it compares](#how-it-compares)
+- [Team mode (v0.2+)](#team-mode-v02)
 - [Security & trust model](#security--trust-model)
 - [Storage](#storage)
 - [Development](#development)
@@ -324,6 +325,16 @@ See [Merging with existing hooks](#merging-with-existing-hooks). Each event hold
 | LOC | ~800 | several thousand | ~2000 |
 
 Pick `claude-presence` if you want something small and focused on "don't let my sessions step on each other". Pick `mcp_agent_mail` if you want rich agent-to-agent workflows.
+
+## Team mode (v0.2+)
+
+For coordinating across multiple machines (a real team, not just one developer's parallel sessions), there is a self-hosted HTTP variant. Same MCP tools, exposed through `claude-presence-server` over HTTP with bearer-token auth and RBAC.
+
+Four deploy paths supported: Docker Compose (localhost or with Caddy + HTTPS), bare metal with systemd, Kubernetes manifests. All in [`deploy/`](./deploy/).
+
+Full guide: [`docs/team-mode.md`](./docs/team-mode.md) (English) / [`docs/team-mode.fr.md`](./docs/team-mode.fr.md) (French).
+
+The stdio mode (`claude-presence-mcp`) keeps working unchanged for solo and single-machine use.
 
 ## Security & trust model
 

@@ -34,6 +34,7 @@ Quand tu lances plusieurs sessions Claude Code sur le même dépôt, elles ne se
 - [CLI](#cli)
 - [Dépannage](#dépannage)
 - [Comparaison](#comparaison)
+- [Mode équipe (v0.2+)](#mode-équipe-v02)
 - [Sécurité et modèle de confiance](#sécurité-et-modèle-de-confiance)
 - [Stockage](#stockage)
 - [Développement](#développement)
@@ -324,6 +325,16 @@ Va voir [Cohabitation avec des hooks existants](#cohabitation-avec-des-hooks-exi
 | LOC | ~800 | plusieurs milliers | ~2000 |
 
 Choisis `claude-presence` si tu veux quelque chose de petit et focalisé sur "que mes sessions ne se marchent pas dessus". Choisis `mcp_agent_mail` si tu veux des flux agent-à-agent riches.
+
+## Mode équipe (v0.2+)
+
+Pour coordonner plusieurs machines (une vraie équipe, pas juste les sessions parallèles d'un seul développeur), il existe une variante HTTP auto-hébergée. Mêmes outils MCP, exposés via `claude-presence-server` en HTTP avec bearer-token et RBAC.
+
+Quatre chemins de déploiement supportés : Docker Compose (localhost ou avec Caddy + HTTPS), sans conteneur avec systemd, manifests Kubernetes. Tout est dans [`deploy/`](./deploy/).
+
+Guide complet : [`docs/team-mode.fr.md`](./docs/team-mode.fr.md) (français) / [`docs/team-mode.md`](./docs/team-mode.md) (anglais).
+
+Le mode stdio (`claude-presence-mcp`) continue de fonctionner tel quel pour les usages solo et mono-machine.
 
 ## Sécurité et modèle de confiance
 
