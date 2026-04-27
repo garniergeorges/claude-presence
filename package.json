@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "claude-presence": "dist/cli/index.js",
-    "claude-presence-mcp": "dist/index.js"
+    "claude-presence-mcp": "dist/index.js",
+    "claude-presence-server": "dist/server/index.js"
   },
   "main": "dist/index.js",
   "files": [
