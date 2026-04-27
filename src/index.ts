@@ -1,16 +1,12 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { openDatabase } from "./db/index.js";
 import { Repository } from "./db/repository.js";
-import { presenceTools } from "./tools/presence.js";
-import { lockTools } from "./tools/locks.js";
-import { inboxTools } from "./tools/inbox.js";
-import type { McpTool } from "./tools/helpers.js";
+import { registerAllTools } from "./tools/registry.js";
 
 const PACKAGE_NAME = "claude-presence";
-const PACKAGE_VERSION = "0.1.1";
+const PACKAGE_VERSION = "0.2.0";
 
 const SERVER_INSTRUCTIONS = `
 This server coordinates multiple Claude Code sessions running in parallel on the same machine.
@@ -22,7 +18,7 @@ Before touching shared resources (CI, deploys, ports, staging DBs), try resource
 with a descriptive resource name. If ok=false, another session holds it — decide whether
 to wait, coordinate via broadcast, or ask the user.
 
-Call session_heartbeat periodically (every 30-60s) so you aren't pruned as dead (2 min TTL).
+Call session_heartbeat periodically (every 30-60s) so you aren't pruned as dead (10 min TTL).
 Call session_unregister on clean exit.
 
 The data is stored locally in SQLite (~/.claude-presence/state.db).
@@ -39,43 +35,7 @@ async function main() {
     { instructions: SERVER_INSTRUCTIONS },
   );
 
-  const allTools: McpTool[] = [
-    ...presenceTools(repo),
-    ...lockTools(repo),
-    ...inboxTools(repo),
-  ];
-
-  for (const tool of allTools) {
-    server.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        inputSchema: tool.inputShape,
-      },
-      async (args: unknown): Promise<CallToolResult> => {
-        try {
-          const result = await tool.handler(args as never);
-          return {
-            content: [
-              { type: "text", text: JSON.stringify(result, null, 2) },
-            ],
-          };
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({ error: message }, null, 2),
-              },
-            ],
-            isError: true,
-          };
-        }
-      },
-    );
-  }
+  const tools = registerAllTools(server, repo);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -92,7 +52,7 @@ async function main() {
   process.on("SIGTERM", shutdown);
 
   console.error(
-    `[${PACKAGE_NAME}] v${PACKAGE_VERSION} ready on stdio — ${allTools.length} tools registered`,
+    `[${PACKAGE_NAME}] v${PACKAGE_VERSION} ready on stdio — ${tools.length} tools registered`,
   );
 }
 

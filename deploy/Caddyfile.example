@@ -1,0 +1,26 @@
+# claude-presence Caddyfile.
+# Replace `claude-presence.example.com` with your real domain.
+# Caddy will request a Let's Encrypt cert automatically on first request.
+
+{$CADDY_DOMAIN:claude-presence.example.com} {
+	encode gzip
+
+	# Forward everything to the MCP server.
+	# Caddy passes X-Forwarded-For automatically; we only override X-Real-IP.
+	reverse_proxy claude-presence:3471 {
+		header_up X-Real-IP {remote_host}
+		flush_interval -1
+	}
+
+	# Tighter health check exposure (anyone can hit /healthz)
+	@health path /healthz
+	handle @health {
+		reverse_proxy claude-presence:3471
+	}
+
+	# Logs go to stdout in JSON
+	log {
+		output stdout
+		format json
+	}
+}

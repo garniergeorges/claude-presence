@@ -1,0 +1,69 @@
+# claude-presence — Docker Compose with Caddy reverse proxy + auto HTTPS.
+#
+# Use this variant when the server must be reachable from outside the host.
+# Caddy handles automatic Let's Encrypt certificate issuance and renewal.
+#
+# Quick start (15 min):
+#   1. Point a domain (A/AAAA records) at this host.
+#   2. cp .env.example .env  and  set CADDY_DOMAIN=your-domain.com
+#   3. cp Caddyfile.example Caddyfile  and adjust if needed
+#   4. docker compose -f docker-compose.caddy.yml up -d
+#   5. docker compose -f docker-compose.caddy.yml exec claude-presence \
+#        node dist/server/index.js token create --name admin --scope admin
+#   6. curl https://your-domain.com/healthz
+
+services:
+  claude-presence:
+    image: ghcr.io/garniergeorges/claude-presence:latest
+    container_name: claude-presence
+    restart: unless-stopped
+    expose:
+      - "3471"
+    volumes:
+      - claude-presence-data:/var/lib/claude-presence
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3471/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - cp-internal
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: claude-presence-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      claude-presence:
+        condition: service_healthy
+    networks:
+      - cp-internal
+
+volumes:
+  claude-presence-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  cp-internal:
+    driver: bridge

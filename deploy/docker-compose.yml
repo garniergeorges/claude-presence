@@ -1,0 +1,44 @@
+# claude-presence — Docker Compose (localhost variant).
+#
+# Quick start (5 min):
+#   1. cp .env.example .env  (no required values for this variant)
+#   2. docker compose up -d
+#   3. docker compose exec claude-presence node dist/server/index.js \
+#        token create --name admin --scope admin
+#      (save the printed token)
+#   4. curl http://localhost:3471/healthz
+#
+# This file binds the server to localhost only. For LAN or internet
+# exposure, see docker-compose.caddy.yml (HTTPS reverse proxy variant)
+# or deploy/k8s/*.yaml (Kubernetes manifests).
+
+services:
+  claude-presence:
+    image: ghcr.io/garniergeorges/claude-presence:latest
+    container_name: claude-presence
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${CP_PORT:-3471}:3471"
+    volumes:
+      - claude-presence-data:/var/lib/claude-presence
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3471/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  claude-presence-data:

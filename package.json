@@ -1,11 +1,12 @@
 {
   "name": "claude-presence",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Minimal MCP server for inter-session coordination between parallel Claude Code instances: presence registry, resource locks, broadcast inbox.",
   "type": "module",
   "bin": {
     "claude-presence": "dist/cli/index.js",
-    "claude-presence-mcp": "dist/index.js"
+    "claude-presence-mcp": "dist/index.js",
+    "claude-presence-server": "dist/server/index.js"
   },
   "main": "dist/index.js",
   "files": [
@@ -54,6 +55,9 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.3.0",
     "zod": "^3.23.8"
+  },
+  "overrides": {
+    "picomatch": "^4.0.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
