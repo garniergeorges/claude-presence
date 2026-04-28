@@ -81,7 +81,7 @@ C'est toute la boucle. Tout le reste ci-dessous, c'est du détail.
 - **CLI** — `claude-presence status` montre les sessions actives hors Claude Code
 - **Zéro démon (mode stdio)** — adossé à SQLite, sans port, sans processus en arrière-plan pour l'usage solo / mono-machine
 - **Mode équipe (v0.2+)** — serveur HTTP auto-hébergé optionnel avec auth bearer-token et RBAC pour coordonner plusieurs machines
-- **Nettoyage par TTL** — les sessions mortes (pas de heartbeat pendant 10 min) sont purgées automatiquement
+- **Nettoyage par TTL** — les sessions sans heartbeat depuis 7 jours sont purgées automatiquement
 
 ## Installation
 
@@ -309,7 +309,7 @@ Les commandes slash sont chargées au démarrage de session. Redémarre Claude C
 `claude-presence` ne s'enregistre pas automatiquement — tu dois appeler `/register` une fois par session. C'est volontaire : les sessions restent explicites et identifiables.
 
 **Un verrou est bloqué parce qu'une session a crashé.**
-Les sessions mortes sont purgées après 10 min (pas de heartbeat). Tu peux forcer le nettoyage immédiat avec `claude-presence clear`, ou forcer la libération d'un verrou spécifique via l'outil MCP `resource_release` avec `force: true`.
+Les sessions sans heartbeat sont purgées après 7 jours. Tu peux forcer le nettoyage immédiat avec `claude-presence clear`, ou forcer la libération d'un verrou spécifique via l'outil MCP `resource_release` avec `force: true`.
 
 **Les hooks semblent casser ma config GitKraken / un hook maison.**
 Va voir [Cohabitation avec des hooks existants](#cohabitation-avec-des-hooks-existants). Chaque événement a un tableau de hooks ; ajoute le tien sans retirer les autres.
@@ -363,7 +363,7 @@ Tables :
 - `team_tokens`, `audit_log` — utilisées uniquement par `claude-presence-server` (mode équipe v0.2+)
 
 Rétention :
-- **Sessions** : purgées après 10 min sans heartbeat.
+- **Sessions** : purgées après 7 jours sans heartbeat.
 - **Verrous** : purgés à expiration du TTL (10 min par défaut, configurable par claim, max 24 h).
 - **Boîte aux lettres** : purgée après 24 h.
 - **Audit log** : conservé indéfiniment ; à requêter et purger manuellement si besoin.

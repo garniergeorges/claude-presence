@@ -81,7 +81,7 @@ That's the whole loop. Everything below is detail.
 - **CLI** — `claude-presence status` shows active sessions outside Claude Code
 - **Zero daemon (stdio mode)** — SQLite-backed, no port, no background process for solo / single-machine use
 - **Team mode (v0.2+)** — optional self-hosted HTTP server with bearer-token auth and RBAC for coordination across machines
-- **TTL-based cleanup** — dead sessions (no heartbeat for 10 min) are removed automatically
+- **TTL-based cleanup** — sessions with no heartbeat for 7 days are removed automatically
 
 ## Install
 
@@ -309,7 +309,7 @@ Slash commands are loaded at session start. Restart Claude Code after `cp comman
 `claude-presence` doesn't auto-register — you must call `/register` once per session. This is deliberate: sessions stay explicit and identifiable.
 
 **A lock is stuck because a session crashed.**
-Dead sessions are pruned after 10 min (no heartbeat). You can force-clean immediately with `claude-presence clear`, or force-release a specific lock with the `resource_release` MCP tool passing `force: true`.
+Sessions with no heartbeat are pruned after 7 days. You can force-clean immediately with `claude-presence clear`, or force-release a specific lock with the `resource_release` MCP tool passing `force: true`.
 
 **Hooks seem to break my existing GitKraken / custom hook setup.**
 See [Merging with existing hooks](#merging-with-existing-hooks). Each event holds an array of hooks; add yours without removing others.
@@ -363,7 +363,7 @@ Tables:
 - `team_tokens`, `audit_log` — only used by `claude-presence-server` (team mode v0.2+)
 
 Retention:
-- **Sessions**: pruned after 10 min without heartbeat.
+- **Sessions**: pruned after 7 days without heartbeat.
 - **Locks**: pruned when their TTL expires (default 10 min, configurable per-claim, max 24 h).
 - **Inbox**: pruned after 24 h.
 - **Audit log**: kept indefinitely; query and prune manually if needed.

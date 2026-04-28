@@ -18,8 +18,9 @@ Before touching shared resources (CI, deploys, ports, staging DBs), try resource
 with a descriptive resource name. If ok=false, another session holds it — decide whether
 to wait, coordinate via broadcast, or ask the user.
 
-Call session_heartbeat periodically (every 30-60s) so you aren't pruned as dead (10 min TTL).
-Call session_unregister on clean exit.
+Sessions are kept for 7 days without a heartbeat. Call session_heartbeat
+occasionally if you want others to see this session as recently active,
+and session_unregister on clean exit.
 
 The data is stored locally in SQLite (~/.claude-presence/state.db).
 No network, no daemon, no telemetry.
