@@ -96,13 +96,25 @@ npm link       # expose claude-presence (CLI), claude-presence-mcp (stdio),
                # et claude-presence-server (HTTP, v0.2+) globalement
 ```
 
-### Depuis npm (quand publié)
+### Depuis npm
 
 ```bash
 npm install -g claude-presence
 ```
 
-Ou invoque via `npx` directement depuis `.mcp.json` — pas besoin d'install globale.
+Ou invoque via `npx` directement depuis `.mcp.json` — pas besoin d'install globale :
+
+```json
+{
+  "mcpServers": {
+    "claude-presence": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "claude-presence-mcp"]
+    }
+  }
+}
+```
 
 ## Configuration
 

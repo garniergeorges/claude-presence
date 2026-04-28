@@ -6,7 +6,7 @@ import { Repository } from "./db/repository.js";
 import { registerAllTools } from "./tools/registry.js";
 
 const PACKAGE_NAME = "claude-presence";
-const PACKAGE_VERSION = "0.2.0";
+const PACKAGE_VERSION = "0.2.1";
 
 const SERVER_INSTRUCTIONS = `
 This server coordinates multiple Claude Code sessions running in parallel on the same machine.
