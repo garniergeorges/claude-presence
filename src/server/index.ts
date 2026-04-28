@@ -11,7 +11,7 @@ import { handleHealth } from "./health.js";
 import { log } from "./logger.js";
 
 const PACKAGE_NAME = "claude-presence";
-const PACKAGE_VERSION = "0.2.0";
+const PACKAGE_VERSION = "0.2.1";
 
 const DEFAULT_PORT = 3471;
 const DEFAULT_HOST = "127.0.0.1";
