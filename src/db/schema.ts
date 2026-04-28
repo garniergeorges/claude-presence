@@ -78,6 +78,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_token ON audit_log(token_id);
 `;
 
-export const SESSION_TTL_MS = 10 * 60 * 1000;
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const LOCK_DEFAULT_TTL_MS = 10 * 60 * 1000;
 export const INBOX_RETENTION_MS = 24 * 60 * 60 * 1000;
