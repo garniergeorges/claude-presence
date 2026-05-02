@@ -50,6 +50,8 @@ export function formatInbox(row: InboxRow) {
     project: row.project,
     from_session: row.from_session,
     from_branch: row.from_branch,
+    to_session: row.to_session,
+    priority: row.priority,
     message: row.message,
     tags: row.tags ? safeParse(row.tags) : null,
     created_at: isoOrNull(row.created_at),
