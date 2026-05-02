@@ -21,6 +21,21 @@ if ! command -v claude-presence >/dev/null 2>&1; then
   exit 0
 fi
 
+# Auto-refresh the session's branch if it has drifted since the last
+# register/refresh (typical case: the user ran `git checkout` between
+# two prompts). Idempotent and silent — no-op if branch is unchanged
+# or session unknown.
+if [ -n "${SESSION_ID:-}" ] && command -v git >/dev/null 2>&1; then
+  CURRENT_BRANCH="$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [ -n "${CURRENT_BRANCH:-}" ]; then
+    claude-presence refresh-branch \
+      --project "$CWD" \
+      --session "$SESSION_ID" \
+      --branch "$CURRENT_BRANCH" \
+      --json >/dev/null 2>&1 || true
+  fi
+fi
+
 STATUS_JSON="$(claude-presence status --project "$CWD" --json 2>/dev/null || echo '[]')"
 LOCKS_JSON="$(claude-presence locks --project "$CWD" --json 2>/dev/null || echo '[]')"
 
