@@ -54,7 +54,7 @@ export function presenceTools(repo: Repository): McpTool[] {
     {
       name: "session_heartbeat",
       description:
-        "Refresh this session's last-seen timestamp. Sessions are kept for 7 days without a heartbeat before being pruned, so periodic heartbeats are only required if you want to mark the session as recently active. If the session was already pruned, supply the optional recreate_* fields to have the server silently re-register it.",
+        "Refresh this session's last-seen timestamp. Sessions are kept for 24 hours without a heartbeat before being pruned, so periodic heartbeats are only required if you want to mark the session as recently active. If the session was already pruned, supply the optional recreate_* fields to have the server silently re-register it.",
       inputShape: {
         session_id: z.string().min(1),
         recreate_project: z
@@ -93,7 +93,7 @@ export function presenceTools(repo: Repository): McpTool[] {
     {
       name: "session_list",
       description:
-        "List active sessions. By default limited to the given project. Sessions with no heartbeat for 7 days are pruned automatically when the list is requested.",
+        "List active sessions. By default limited to the given project. Sessions with no heartbeat for 24 hours are pruned automatically when the list is requested.",
       inputShape: {
         project: z
           .string()

@@ -21,7 +21,7 @@ This server coordinates Claude Code sessions across machines via HTTP MCP.
 
 At session start, call session_register with a stable session_id and project path.
 Before touching shared resources, call resource_claim. Sessions are
-kept for 7 days without a heartbeat. Data stored locally in SQLite.
+kept for 24 hours without a heartbeat. Data stored locally in SQLite.
 No telemetry, no cloud.
 `.trim();
 
