@@ -34,12 +34,15 @@ CREATE TABLE IF NOT EXISTS inbox (
   project TEXT NOT NULL,
   from_session TEXT NOT NULL,
   from_branch TEXT,
+  to_session TEXT,
+  priority TEXT NOT NULL DEFAULT 'info' CHECK (priority IN ('info', 'warning', 'urgent')),
   message TEXT NOT NULL,
   tags TEXT,
   created_at INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_inbox_project ON inbox(project, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inbox_to_session ON inbox(to_session);
 
 CREATE TABLE IF NOT EXISTS inbox_reads (
   session_id TEXT NOT NULL,

@@ -4,7 +4,12 @@ import {
   LOCK_DEFAULT_TTL_MS,
   SESSION_TTL_MS,
 } from "./schema.js";
-import type { InboxRow, ResourceLockRow, SessionRow } from "./index.js";
+import type {
+  InboxPriority,
+  InboxRow,
+  ResourceLockRow,
+  SessionRow,
+} from "./index.js";
 
 export interface RegisterSessionInput {
   id: string;
@@ -255,18 +260,22 @@ export class Repository {
     project: string;
     from_session: string;
     from_branch?: string | null;
+    to_session?: string | null;
+    priority?: InboxPriority | null;
     message: string;
     tags?: string[] | null;
   }): InboxRow {
     this.pruneOldInbox();
     const stmt = this.db.prepare(`
-      INSERT INTO inbox (project, from_session, from_branch, message, tags, created_at)
-      VALUES (@project, @from_session, @from_branch, @message, @tags, @created_at)
+      INSERT INTO inbox (project, from_session, from_branch, to_session, priority, message, tags, created_at)
+      VALUES (@project, @from_session, @from_branch, @to_session, @priority, @message, @tags, @created_at)
     `);
     const result = stmt.run({
       project: input.project,
       from_session: input.from_session,
       from_branch: input.from_branch ?? null,
+      to_session: input.to_session ?? null,
+      priority: input.priority ?? "info",
       message: input.message,
       tags: input.tags ? JSON.stringify(input.tags) : null,
       created_at: this.now(),
@@ -281,9 +290,24 @@ export class Repository {
     session_id: string;
     unread_only?: boolean;
     limit?: number;
+    peek?: boolean;
+    min_priority?: InboxPriority;
   }): { messages: InboxRow[]; unread_total: number; total: number } {
     this.pruneOldInbox();
     const limit = input.limit ?? 50;
+
+    // Visibility: messages addressed to me (to_session = me) OR broadcast (to_session IS NULL).
+    // Always exclude my own posts.
+    const visibility =
+      "i.project = ? AND i.from_session != ? AND (i.to_session IS NULL OR i.to_session = ?)";
+    const visibilityArgs = [
+      input.project,
+      input.session_id,
+      input.session_id,
+    ] as const;
+
+    const priorityFilter = priorityFilterClause(input.min_priority);
+
     let rows: InboxRow[];
 
     if (input.unread_only) {
@@ -293,50 +317,43 @@ export class Repository {
           SELECT i.* FROM inbox i
           LEFT JOIN inbox_reads r
             ON r.message_id = i.id AND r.session_id = ?
-          WHERE i.project = ? AND r.message_id IS NULL AND i.from_session != ?
+          WHERE ${visibility} AND r.message_id IS NULL${priorityFilter}
           ORDER BY i.created_at DESC
           LIMIT ?
         `,
         )
-        .all(
-          input.session_id,
-          input.project,
-          input.session_id,
-          limit,
-        ) as InboxRow[];
+        .all(input.session_id, ...visibilityArgs, limit) as InboxRow[];
     } else {
       rows = this.db
         .prepare(
           `
-          SELECT * FROM inbox
-          WHERE project = ? AND from_session != ?
-          ORDER BY created_at DESC
+          SELECT i.* FROM inbox i
+          WHERE ${visibility}${priorityFilter}
+          ORDER BY i.created_at DESC
           LIMIT ?
         `,
         )
-        .all(input.project, input.session_id, limit) as InboxRow[];
+        .all(...visibilityArgs, limit) as InboxRow[];
     }
 
-    // Counts are computed BEFORE marking as read, so the caller sees
-    // how many unread messages existed at the moment of the call.
     const unreadCountRow = this.db
       .prepare(
         `
         SELECT COUNT(*) AS n FROM inbox i
         LEFT JOIN inbox_reads r
           ON r.message_id = i.id AND r.session_id = ?
-        WHERE i.project = ? AND r.message_id IS NULL AND i.from_session != ?
+        WHERE ${visibility} AND r.message_id IS NULL${priorityFilter}
       `,
       )
-      .get(input.session_id, input.project, input.session_id) as { n: number };
+      .get(input.session_id, ...visibilityArgs) as { n: number };
 
     const totalCountRow = this.db
       .prepare(
-        `SELECT COUNT(*) AS n FROM inbox WHERE project = ? AND from_session != ?`,
+        `SELECT COUNT(*) AS n FROM inbox i WHERE ${visibility}${priorityFilter}`,
       )
-      .get(input.project, input.session_id) as { n: number };
+      .get(...visibilityArgs) as { n: number };
 
-    if (rows.length > 0) {
+    if (rows.length > 0 && !input.peek) {
       const markStmt = this.db.prepare(
         "INSERT OR IGNORE INTO inbox_reads (session_id, message_id, read_at) VALUES (?, ?, ?)",
       );
@@ -353,4 +370,10 @@ export class Repository {
       total: totalCountRow.n,
     };
   }
+}
+
+function priorityFilterClause(min?: InboxPriority): string {
+  if (!min || min === "info") return "";
+  if (min === "warning") return " AND i.priority IN ('warning', 'urgent')";
+  return " AND i.priority = 'urgent'";
 }

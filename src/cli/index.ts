@@ -2,32 +2,52 @@
 import { openDatabase, getDefaultDbPath } from "../db/index.js";
 import { Repository } from "../db/repository.js";
 
-const COMMANDS = ["status", "locks", "clear", "path", "help"] as const;
+const COMMANDS = ["status", "locks", "inbox", "clear", "path", "help"] as const;
 type Command = (typeof COMMANDS)[number];
 
-function parseArgs(argv: string[]): {
+interface CliArgs {
   command: Command;
   project?: string;
+  session?: string;
+  minPriority?: "info" | "warning" | "urgent";
   json: boolean;
   all: boolean;
-} {
+  unreadOnly: boolean;
+  peek: boolean;
+}
+
+function parseArgs(argv: string[]): CliArgs {
   const args = argv.slice(2);
   const command = ((args[0] ?? "status") as Command);
   let project: string | undefined;
+  let session: string | undefined;
+  let minPriority: CliArgs["minPriority"];
   let json = false;
   let all = false;
+  let unreadOnly = true;
+  let peek = false;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
     if (a === "--project" || a === "-p") {
       project = args[++i];
+    } else if (a === "--session" || a === "-s") {
+      session = args[++i];
+    } else if (a === "--min-priority") {
+      const v = args[++i];
+      if (v === "info" || v === "warning" || v === "urgent") minPriority = v;
     } else if (a === "--json") {
       json = true;
     } else if (a === "--all") {
       all = true;
+      // For inbox: --all means include already-read messages.
+      // For clear: --all also enables inbox pruning. Same flag, different command.
+      unreadOnly = false;
+    } else if (a === "--peek") {
+      peek = true;
     }
   }
-  return { command, project, json, all };
+  return { command, project, session, minPriority, json, all, unreadOnly, peek };
 }
 
 function formatRelative(ms: number): string {
@@ -85,8 +105,53 @@ function printLocks(repo: Repository, project: string | undefined, json: boolean
   }
 }
 
+function printInbox(repo: Repository, args: CliArgs) {
+  if (!args.session) {
+    if (args.json) {
+      console.log(JSON.stringify({ error: "missing --session <id>" }));
+    } else {
+      console.error("inbox requires --session <id>");
+    }
+    process.exit(1);
+  }
+  if (!args.project) {
+    if (args.json) {
+      console.log(JSON.stringify({ error: "missing --project <path>" }));
+    } else {
+      console.error("inbox requires --project <path>");
+    }
+    process.exit(1);
+  }
+  const result = repo.readInbox({
+    project: args.project,
+    session_id: args.session,
+    unread_only: args.unreadOnly,
+    peek: args.peek,
+    min_priority: args.minPriority,
+  });
+  if (args.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (result.messages.length === 0) {
+    console.log(args.unreadOnly ? "No new messages." : "No messages.");
+    return;
+  }
+  console.log(
+    `${result.messages.length} message(s)  [unread: ${result.unread_total}, total: ${result.total}]\n`,
+  );
+  for (const m of result.messages) {
+    const target = m.to_session ? `→ ${m.to_session}` : "→ all";
+    const tag = m.priority === "info" ? "" : `[${m.priority}] `;
+    console.log(
+      `  ${tag}${formatRelative(m.created_at)} from ${m.from_session}${m.from_branch ? ` (${m.from_branch})` : ""} ${target}`,
+    );
+    console.log(`    ${m.message}\n`);
+  }
+}
+
 function printHelp() {
-  console.log(`claude-presence — inter-session coordination for Claude Code
+  console.log(`claude-presence — inter-session coordination
 
 Usage:
   claude-presence <command> [options]
@@ -94,25 +159,30 @@ Usage:
 Commands:
   status              Show active sessions (default)
   locks               Show active resource locks
+  inbox               Read messages for a session (requires --session, --project)
   clear               Prune dead sessions and expired locks
   path                Print the SQLite database path
   help                Show this help
 
 Options:
   --project <path>    Filter to a specific project
-  --json              Output JSON instead of human-readable text
-  --all               (clear) include inbox cleanup
+  --session <id>      Session id (inbox)
+  --min-priority <p>  Filter inbox by min priority (info|warning|urgent)
+  --peek              (inbox) Read without marking as read
+  --json              Output JSON
+  --all               (clear) include inbox cleanup; (inbox) include already-read
 
 Examples:
   claude-presence status
-  claude-presence status --project /Volumes/DataIA/Projets/myapp
   claude-presence locks --json
+  claude-presence inbox --project /path/to/repo --session sess-A --peek --json
   claude-presence clear --all
 `);
 }
 
 async function main() {
-  const { command, project, json, all } = parseArgs(process.argv);
+  const args = parseArgs(process.argv);
+  const { command, project, json, all } = args;
 
   if (command === "help" || !COMMANDS.includes(command)) {
     printHelp();
@@ -132,6 +202,8 @@ async function main() {
       printStatus(repo, project, json);
     } else if (command === "locks") {
       printLocks(repo, project, json);
+    } else if (command === "inbox") {
+      printInbox(repo, args);
     } else if (command === "clear") {
       const sessions = repo.pruneDeadSessions();
       const locks = repo.pruneExpiredLocks();

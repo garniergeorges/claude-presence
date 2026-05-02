@@ -26,11 +26,15 @@ export interface ResourceLockRow {
   expires_at: number;
 }
 
+export type InboxPriority = "info" | "warning" | "urgent";
+
 export interface InboxRow {
   id: number;
   project: string;
   from_session: string;
   from_branch: string | null;
+  to_session: string | null;
+  priority: InboxPriority;
   message: string;
   tags: string | null;
   created_at: number;
@@ -52,5 +56,20 @@ export function openDatabase(dbPath: string = getDefaultDbPath()): Database.Data
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
   db.exec(SCHEMA_SQL);
+  migrateInbox(db);
   return db;
+}
+
+function migrateInbox(db: Database.Database): void {
+  const cols = db
+    .prepare("PRAGMA table_info(inbox)")
+    .all() as Array<{ name: string }>;
+  const has = (name: string) => cols.some((c) => c.name === name);
+  if (!has("to_session")) {
+    db.exec("ALTER TABLE inbox ADD COLUMN to_session TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_inbox_to_session ON inbox(to_session)");
+  }
+  if (!has("priority")) {
+    db.exec("ALTER TABLE inbox ADD COLUMN priority TEXT NOT NULL DEFAULT 'info'");
+  }
 }
