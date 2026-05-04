@@ -81,6 +81,7 @@ C'est toute la boucle. Tout le reste ci-dessous, c'est du détail.
 - **CLI** — `claude-presence status` montre les sessions actives hors Claude Code
 - **Zéro démon (mode stdio)** — adossé à SQLite, sans port, sans processus en arrière-plan pour l'usage solo / mono-machine
 - **Mode équipe (v0.2+)** — serveur HTTP auto-hébergé optionnel avec auth bearer-token et RBAC pour coordonner plusieurs machines
+- **Rafraîchissement auto de la branche** — quand l'utilisateur fait `git checkout`, la branche stockée est mise à jour silencieusement au prompt suivant
 - **Nettoyage par TTL** — les sessions sans heartbeat depuis 24 heures sont purgées automatiquement
 
 ## Installation

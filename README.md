@@ -81,6 +81,7 @@ That's the whole loop. Everything below is detail.
 - **CLI** — `claude-presence status` shows active sessions outside Claude Code
 - **Zero daemon (stdio mode)** — SQLite-backed, no port, no background process for solo / single-machine use
 - **Team mode (v0.2+)** — optional self-hosted HTTP server with bearer-token auth and RBAC for coordination across machines
+- **Auto branch refresh** — when the user runs `git checkout`, the session's stored branch is updated transparently on the next prompt
 - **TTL-based cleanup** — sessions with no heartbeat for 24 hours are removed automatically
 
 ## Install

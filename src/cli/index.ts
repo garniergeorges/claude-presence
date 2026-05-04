@@ -2,13 +2,22 @@
 import { openDatabase, getDefaultDbPath } from "../db/index.js";
 import { Repository } from "../db/repository.js";
 
-const COMMANDS = ["status", "locks", "inbox", "clear", "path", "help"] as const;
+const COMMANDS = [
+  "status",
+  "locks",
+  "inbox",
+  "refresh-branch",
+  "clear",
+  "path",
+  "help",
+] as const;
 type Command = (typeof COMMANDS)[number];
 
 interface CliArgs {
   command: Command;
   project?: string;
   session?: string;
+  branch?: string;
   minPriority?: "info" | "warning" | "urgent";
   json: boolean;
   all: boolean;
@@ -21,6 +30,7 @@ function parseArgs(argv: string[]): CliArgs {
   const command = ((args[0] ?? "status") as Command);
   let project: string | undefined;
   let session: string | undefined;
+  let branch: string | undefined;
   let minPriority: CliArgs["minPriority"];
   let json = false;
   let all = false;
@@ -33,6 +43,8 @@ function parseArgs(argv: string[]): CliArgs {
       project = args[++i];
     } else if (a === "--session" || a === "-s") {
       session = args[++i];
+    } else if (a === "--branch" || a === "-b") {
+      branch = args[++i];
     } else if (a === "--min-priority") {
       const v = args[++i];
       if (v === "info" || v === "warning" || v === "urgent") minPriority = v;
@@ -47,7 +59,17 @@ function parseArgs(argv: string[]): CliArgs {
       peek = true;
     }
   }
-  return { command, project, session, minPriority, json, all, unreadOnly, peek };
+  return {
+    command,
+    project,
+    session,
+    branch,
+    minPriority,
+    json,
+    all,
+    unreadOnly,
+    peek,
+  };
 }
 
 function formatRelative(ms: number): string {
@@ -150,6 +172,59 @@ function printInbox(repo: Repository, args: CliArgs) {
   }
 }
 
+function printRefreshBranch(repo: Repository, args: CliArgs) {
+  if (!args.session || !args.project || !args.branch) {
+    const err = "refresh-branch requires --session, --project, --branch";
+    if (args.json) {
+      console.log(JSON.stringify({ error: err }));
+    } else {
+      console.error(err);
+    }
+    process.exit(1);
+  }
+
+  const existing = repo.getSession(args.session);
+  if (!existing) {
+    const result = { changed: false, reason: "session_not_found" as const };
+    if (args.json) console.log(JSON.stringify(result));
+    else console.log("Session not found; nothing to refresh.");
+    return;
+  }
+  if (existing.project !== args.project) {
+    const result = {
+      changed: false,
+      reason: "project_mismatch" as const,
+      stored_project: existing.project,
+    };
+    if (args.json) console.log(JSON.stringify(result));
+    else console.error(`Project mismatch (stored: ${existing.project}); skipping.`);
+    return;
+  }
+  if (existing.branch === args.branch) {
+    const result = { changed: false, branch: args.branch };
+    if (args.json) console.log(JSON.stringify(result));
+    else console.log(`Branch unchanged (${args.branch}).`);
+    return;
+  }
+
+  repo.registerSession({
+    id: args.session,
+    project: existing.project,
+    branch: args.branch,
+    intent: existing.intent,
+    pid: existing.pid,
+    hostname: existing.hostname,
+  });
+
+  const result = {
+    changed: true,
+    from: existing.branch,
+    to: args.branch,
+  };
+  if (args.json) console.log(JSON.stringify(result));
+  else console.log(`Branch refreshed: ${existing.branch ?? "(none)"} → ${args.branch}.`);
+}
+
 function printHelp() {
   console.log(`claude-presence — inter-session coordination
 
@@ -160,13 +235,15 @@ Commands:
   status              Show active sessions (default)
   locks               Show active resource locks
   inbox               Read messages for a session (requires --session, --project)
+  refresh-branch      Update a session's branch if it has drifted (requires --session, --project, --branch)
   clear               Prune dead sessions and expired locks
   path                Print the SQLite database path
   help                Show this help
 
 Options:
   --project <path>    Filter to a specific project
-  --session <id>      Session id (inbox)
+  --session <id>      Session id (inbox, refresh-branch)
+  --branch <name>     Current git branch (refresh-branch)
   --min-priority <p>  Filter inbox by min priority (info|warning|urgent)
   --peek              (inbox) Read without marking as read
   --json              Output JSON
@@ -176,6 +253,7 @@ Examples:
   claude-presence status
   claude-presence locks --json
   claude-presence inbox --project /path/to/repo --session sess-A --peek --json
+  claude-presence refresh-branch --project /path/to/repo --session sess-A --branch feat/foo
   claude-presence clear --all
 `);
 }
@@ -204,6 +282,8 @@ async function main() {
       printLocks(repo, project, json);
     } else if (command === "inbox") {
       printInbox(repo, args);
+    } else if (command === "refresh-branch") {
+      printRefreshBranch(repo, args);
     } else if (command === "clear") {
       const sessions = repo.pruneDeadSessions();
       const locks = repo.pruneExpiredLocks();
