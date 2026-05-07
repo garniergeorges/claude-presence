@@ -42,7 +42,6 @@ CREATE TABLE IF NOT EXISTS inbox (
 );
 
 CREATE INDEX IF NOT EXISTS idx_inbox_project ON inbox(project, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_inbox_to_session ON inbox(to_session);
 
 CREATE TABLE IF NOT EXISTS inbox_reads (
   session_id TEXT NOT NULL,

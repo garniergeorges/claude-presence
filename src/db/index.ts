@@ -67,9 +67,15 @@ function migrateInbox(db: Database.Database): void {
   const has = (name: string) => cols.some((c) => c.name === name);
   if (!has("to_session")) {
     db.exec("ALTER TABLE inbox ADD COLUMN to_session TEXT");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_inbox_to_session ON inbox(to_session)");
   }
   if (!has("priority")) {
     db.exec("ALTER TABLE inbox ADD COLUMN priority TEXT NOT NULL DEFAULT 'info'");
   }
+  // Always (re)attempt the index — IF NOT EXISTS handles fresh DBs and
+  // re-opens after the columns were added. Kept out of SCHEMA_SQL so the
+  // initial db.exec doesn't reference a column that does not exist yet
+  // on databases predating PR #19.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_inbox_to_session ON inbox(to_session)",
+  );
 }
