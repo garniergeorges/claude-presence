@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # claude-presence — UserPromptSubmit hook
 #
-# Surfaces unread inbox messages and a one-line presence summary on each prompt.
-# Direct messages (to_session = me) and warning/urgent broadcasts are injected
-# verbatim. Lower-priority broadcasts only contribute to the counter.
+# Emits two outputs per prompt:
+#   - systemMessage: short banner visible to the user above the model's reply
+#     ("🔔 claude-presence: N unread message(s) — see below"). Shown only
+#     when something pending exists (DM or broadcast, any priority).
+#   - hookSpecificOutput.additionalContext: full unread inbox + presence
+#     summary, passed silently to the model so it can answer accurately
+#     if the user asks about pending notifications. Read in peek mode,
+#     so messages stay unread for /inbox.
 #
 # Runs on every user prompt, so it MUST be fast (< 100ms).
 
@@ -65,8 +70,8 @@ if [ -n "${PRESENCE_SESSION_ID:-}" ]; then
   INBOX_COUNT="$(printf '%s' "$INBOX_JSON" | sed -n 's/.*"unread_total"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -n 1)"
   INBOX_COUNT="${INBOX_COUNT:-0}"
 
-  # Surface DMs and warning/urgent broadcasts as full text (not just a counter).
-  HIGH_JSON="$(claude-presence inbox --project "$CWD" --session "$PRESENCE_SESSION_ID" --peek --min-priority warning --json 2>/dev/null || echo '{}')"
+  # Surface every unread message (DMs + broadcasts, all priorities).
+  HIGH_JSON="$(claude-presence inbox --project "$CWD" --session "$PRESENCE_SESSION_ID" --peek --json 2>/dev/null || echo '{}')"
   if printf '%s' "$HIGH_JSON" | grep -q '"messages"'; then
     INBOX_TEXT="$(node -e '
       let s = "";
@@ -110,6 +115,17 @@ if [ "${INBOX_COUNT:-0}" -gt 0 ]; then
 fi
 SUMMARY="${SUMMARY}."
 
+# systemMessage: short, user-visible banner (printed in the terminal above
+# the model's reply). Shown whenever there is at least one unread message
+# addressed to this session, regardless of priority. Omitted otherwise so
+# we don't spam when the inbox is empty.
+SYSTEM_MSG=""
+if [ -n "$INBOX_TEXT" ]; then
+  SYSTEM_MSG="🔔 claude-presence: ${INBOX_COUNT} unread message(s) — see below"
+fi
+
+# additionalContext: full detail passed silently to the model so it can
+# answer accurately if the user asks about pending notifications.
 if [ -n "$INBOX_TEXT" ]; then
   CONTEXT="${SUMMARY}
 
@@ -119,15 +135,35 @@ else
   CONTEXT="${SUMMARY} Call session_list, resource_list, or read_inbox for details before shared operations."
 fi
 
-# JSON-escape the context payload.
-ESCAPED="$(printf '%s' "$CONTEXT" | node -e '
+# JSON-escape both payloads.
+ESCAPED_CONTEXT="$(printf '%s' "$CONTEXT" | node -e '
+  let s = "";
+  process.stdin.on("data", (d) => (s += d));
+  process.stdin.on("end", () => process.stdout.write(JSON.stringify(s)));
+')"
+ESCAPED_SYS="$(printf '%s' "$SYSTEM_MSG" | node -e '
   let s = "";
   process.stdin.on("data", (d) => (s += d));
   process.stdin.on("end", () => process.stdout.write(JSON.stringify(s)));
 ')"
 
-cat <<EOF
+if [ -n "$SYSTEM_MSG" ]; then
+  cat <<EOF
 {
-  "additionalContext": ${ESCAPED}
+  "systemMessage": ${ESCAPED_SYS},
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": ${ESCAPED_CONTEXT}
+  }
 }
 EOF
+else
+  cat <<EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": ${ESCAPED_CONTEXT}
+  }
+}
+EOF
+fi

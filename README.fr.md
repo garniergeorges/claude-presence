@@ -82,7 +82,7 @@ C'est toute la boucle. Tout le reste ci-dessous, c'est du détail.
 - **Zéro démon (mode stdio)** — adossé à SQLite, sans port, sans processus en arrière-plan pour l'usage solo / mono-machine
 - **Mode équipe (v0.2+)** — serveur HTTP auto-hébergé optionnel avec auth bearer-token et RBAC pour coordonner plusieurs machines
 - **Rafraîchissement auto de la branche** — quand l'utilisateur fait `git checkout`, la branche stockée est mise à jour silencieusement au prompt suivant
-- **Notifications auto-surfacées** — les messages directs (`/notify`) et les broadcasts `warning`/`urgent` apparaissent automatiquement au prochain prompt de la session destinataire, sans avoir besoin de taper `/inbox`
+- **Notifications auto-surfacées** — tout message non lu adressé à ta session (DM ou broadcast, toutes priorités) est annoncé visuellement par une bannière `🔔 claude-presence: N unread message(s)` au-dessus de la réponse suivante, et le contenu complet est passé au modèle pour qu'il puisse répondre précisément si tu lui poses la question. Sans avoir à taper `/inbox`.
 - **Nettoyage par TTL** — les sessions sans heartbeat depuis 24 heures sont purgées automatiquement
 
 ## Installation
@@ -225,15 +225,19 @@ La session B peut maintenant poursuivre.
 Les commandes slash couvrent 99% de l'usage quotidien. Les hooks sont du polissage optionnel pour le dernier 1% :
 
 - **`hooks/session-start.sh`** s'exécute à l'ouverture d'une nouvelle session Claude Code. Il affiche un rappel court pour que tu penses à `/register` et aux verrous de ressources avant les opérations partagées. Il **n'enregistre pas** la session automatiquement (c'est voulu — la commande slash garde l'enregistrement explicite).
-- **`hooks/user-prompt-submit.sh`** s'exécute à chaque prompt utilisateur. Il injecte un message système d'une ligne dans le contexte quand d'autres sessions ou verrous sont actifs sur ce projet, et fait remonter les messages directs et les broadcasts `warning`/`urgent` mot pour mot pour que la session destinataire les voie à son prochain prompt sans avoir besoin de taper `/inbox`.
+- **`hooks/user-prompt-submit.sh`** s'exécute à chaque prompt utilisateur. Quand quelque chose est en attente sur ce projet, il émet deux sorties :
+  - un `systemMessage` affiché **visiblement au-dessus de la réponse du modèle** (`🔔 claude-presence: N unread message(s) — see below`), pour que l'utilisateur ne puisse pas le rater ;
+  - un `additionalContext` passé silencieusement au modèle avec l'inbox complet non lu (DM + broadcasts, toutes priorités) et le récap présence/locks, pour que le modèle puisse répondre précisément si tu demandes "j'ai des notifications ?".
+
+  Les messages sont lus en `peek` — ils restent non lus pour `/inbox`.
 
 > Le hook `UserPromptSubmit` appelle la CLI `claude-presence`, donc elle doit être dans ton `PATH` (géré par `npm link` ou `npm install -g`). Si la CLI est absente, le hook sort silencieusement avec 0 — pas de blocage.
 
 ### Comment marche la résolution d'identité
 
-Le hook reçoit l'id de session interne de Claude Code sur stdin, qui **n'est pas** le même que l'id humain que tu choisis au moment de `/register`. La commande slash `/register` stocke donc les deux : à l'invocation elle passe `${CLAUDE_SESSION_ID}` comme `client_session_id`, créant un mapping entre l'id client et celui que tu as choisi. À chaque prompt, le hook appelle `claude-presence resolve-session --client <CLAUDE_SESSION_ID>` pour identifier "moi" et trouver les DM et broadcasts haute-priorité qui m'étaient adressés.
+Le hook reçoit l'id de session interne de Claude Code sur stdin, qui **n'est pas** le même que l'id humain que tu choisis au moment de `/register`. La commande slash `/register` stocke donc les deux : à l'invocation elle passe `${CLAUDE_SESSION_ID}` comme `client_session_id`, créant un mapping entre l'id client et celui que tu as choisi. À chaque prompt, le hook appelle `claude-presence resolve-session --client <CLAUDE_SESSION_ID>` pour identifier "moi" et lister tous les messages non lus adressés à cette session.
 
-Si aucun mapping n'existe (sessions héritées d'avant cette feature, ou `client_session_id` volontairement omis), le hook dégrade proprement : il affiche toujours le compteur générique (`N autres sessions actives, M non lus`), mais ne peut pas injecter les notifications verbatim.
+Si aucun mapping n'existe (sessions héritées d'avant cette feature, ou `client_session_id` volontairement omis), le hook dégrade proprement : il émet toujours un compteur générique (`N autres sessions actives`) dans `additionalContext`, mais ne peut pas afficher la bannière `🔔` ni injecter les notifications verbatim.
 
 ### Activation
 
