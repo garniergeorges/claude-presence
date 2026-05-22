@@ -57,7 +57,8 @@
     "zod": "^3.23.8"
   },
   "overrides": {
-    "picomatch": "^4.0.4"
+    "picomatch": "^4.0.4",
+    "fast-uri": "^3.1.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
