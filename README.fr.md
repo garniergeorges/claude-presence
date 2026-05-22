@@ -412,7 +412,7 @@ deploy/               # déploiements à base de Dockerfile pour le mode équipe
 docs/
   team-mode.md / .fr.md       # guide de déploiement bilingue
 .github/workflows/
-  ci.yml                      # build + test sur Ubuntu + macOS x Node 18/20/22
+  ci.yml                      # build + test sur Ubuntu + macOS x Node 20/22/24
   docker.yml                  # buildx multi-arch + cosign + Trivy (v0.2+)
 ```
 

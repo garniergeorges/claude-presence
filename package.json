@@ -49,11 +49,11 @@
   },
   "homepage": "https://github.com/garniergeorges/claude-presence#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^12.10.0",
     "zod": "^3.23.8"
   },
   "overrides": {
