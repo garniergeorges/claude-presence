@@ -14,6 +14,7 @@ export interface SessionRow {
   started_at: number;
   last_heartbeat: number;
   metadata: string | null;
+  client_session_id: string | null;
 }
 
 export interface ResourceLockRow {
@@ -57,7 +58,21 @@ export function openDatabase(dbPath: string = getDefaultDbPath()): Database.Data
   db.pragma("busy_timeout = 5000");
   db.exec(SCHEMA_SQL);
   migrateInbox(db);
+  migrateSessions(db);
   return db;
+}
+
+function migrateSessions(db: Database.Database): void {
+  const cols = db
+    .prepare("PRAGMA table_info(sessions)")
+    .all() as Array<{ name: string }>;
+  const has = (name: string) => cols.some((c) => c.name === name);
+  if (!has("client_session_id")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN client_session_id TEXT");
+  }
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_sessions_client_id ON sessions(client_session_id)",
+  );
 }
 
 function migrateInbox(db: Database.Database): void {

@@ -19,6 +19,19 @@ export interface RegisterSessionInput {
   pid?: number | null;
   hostname?: string | null;
   metadata?: Record<string, unknown> | null;
+  client_session_id?: string | null;
+}
+
+export class ClientSessionConflictError extends Error {
+  constructor(
+    public readonly client_session_id: string,
+    public readonly held_by: string,
+  ) {
+    super(
+      `client_session_id "${client_session_id}" is already mapped to session "${held_by}"`,
+    );
+    this.name = "ClientSessionConflictError";
+  }
 }
 
 export interface ClaimResult {
@@ -71,9 +84,22 @@ export class Repository {
 
   registerSession(input: RegisterSessionInput): SessionRow {
     const now = this.now();
+    const clientId = input.client_session_id ?? null;
+
+    if (clientId) {
+      const holder = this.db
+        .prepare(
+          "SELECT id FROM sessions WHERE client_session_id = ? AND id != ?",
+        )
+        .get(clientId, input.id) as { id: string } | undefined;
+      if (holder) {
+        throw new ClientSessionConflictError(clientId, holder.id);
+      }
+    }
+
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, project, branch, intent, pid, hostname, started_at, last_heartbeat, metadata)
-      VALUES (@id, @project, @branch, @intent, @pid, @hostname, @started_at, @last_heartbeat, @metadata)
+      INSERT INTO sessions (id, project, branch, intent, pid, hostname, started_at, last_heartbeat, metadata, client_session_id)
+      VALUES (@id, @project, @branch, @intent, @pid, @hostname, @started_at, @last_heartbeat, @metadata, @client_session_id)
       ON CONFLICT(id) DO UPDATE SET
         project = excluded.project,
         branch = excluded.branch,
@@ -81,7 +107,8 @@ export class Repository {
         pid = excluded.pid,
         hostname = excluded.hostname,
         last_heartbeat = excluded.last_heartbeat,
-        metadata = excluded.metadata
+        metadata = excluded.metadata,
+        client_session_id = COALESCE(excluded.client_session_id, sessions.client_session_id)
     `);
     stmt.run({
       id: input.id,
@@ -93,8 +120,26 @@ export class Repository {
       started_at: now,
       last_heartbeat: now,
       metadata: input.metadata ? JSON.stringify(input.metadata) : null,
+      client_session_id: clientId,
     });
     return this.getSession(input.id)!;
+  }
+
+  findByClientSessionId(
+    clientSessionId: string,
+    project?: string,
+  ): SessionRow | undefined {
+    this.pruneDeadSessions();
+    if (project) {
+      return this.db
+        .prepare(
+          "SELECT * FROM sessions WHERE client_session_id = ? AND project = ?",
+        )
+        .get(clientSessionId, project) as SessionRow | undefined;
+    }
+    return this.db
+      .prepare("SELECT * FROM sessions WHERE client_session_id = ?")
+      .get(clientSessionId) as SessionRow | undefined;
   }
 
   heartbeat(

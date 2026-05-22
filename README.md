@@ -82,6 +82,7 @@ That's the whole loop. Everything below is detail.
 - **Zero daemon (stdio mode)** — SQLite-backed, no port, no background process for solo / single-machine use
 - **Team mode (v0.2+)** — optional self-hosted HTTP server with bearer-token auth and RBAC for coordination across machines
 - **Auto branch refresh** — when the user runs `git checkout`, the session's stored branch is updated transparently on the next prompt
+- **Auto-surfaced notifications** — direct messages (`/notify`) and `warning`/`urgent` broadcasts appear in the recipient session's next prompt automatically, no manual `/inbox` needed
 - **TTL-based cleanup** — sessions with no heartbeat for 24 hours are removed automatically
 
 ## Install
@@ -224,9 +225,15 @@ Session B can now proceed.
 The slash commands cover 99% of daily use. Hooks are optional polish for the last 1%:
 
 - **`hooks/session-start.sh`** runs when you open a new Claude Code session. It prints a short reminder so you remember to `/register` and think about resource locks before shared ops. It does **not** auto-register the session (by design — the slash command keeps it explicit).
-- **`hooks/user-prompt-submit.sh`** runs on every user prompt. It injects a one-line system message into the context when other sessions or locks are active on this project, so Claude Code stays aware without you asking.
+- **`hooks/user-prompt-submit.sh`** runs on every user prompt. It injects a one-line system message into the context when other sessions or locks are active on this project, and surfaces direct messages and `warning`/`urgent` broadcasts verbatim so the recipient sees them on its next prompt without typing `/inbox`.
 
 > The `UserPromptSubmit` hook shells out to the `claude-presence` CLI, so it must be on your `PATH` (handled by `npm link` or `npm install -g`). If the CLI is missing, the hook silently exits 0 — no breakage.
+
+### How identity resolution works
+
+The hook receives Claude Code's internal session id on stdin, which is **not** the same as the human-friendly id you choose at `/register`. The `/register` slash command therefore stores both: when invoked, it passes `${CLAUDE_SESSION_ID}` as `client_session_id`, building a mapping from the client id to your chosen one. On every prompt, the hook calls `claude-presence resolve-session --client <CLAUDE_SESSION_ID>` to find "me" and look up DMs and high-priority broadcasts addressed to that session id.
+
+If no mapping exists (legacy sessions registered before this feature, or `client_session_id` omitted on purpose), the hook degrades gracefully: it still shows the generic counter (`N other sessions active, M unread`), but cannot inject verbatim notifications.
 
 ### Enable them
 

@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { Repository } from "../db/repository.js";
+import {
+  ClientSessionConflictError,
+  type Repository,
+} from "../db/repository.js";
 import { formatSession, type McpTool } from "./helpers.js";
 
 export function presenceTools(repo: Repository): McpTool[] {
@@ -28,16 +31,38 @@ export function presenceTools(repo: Repository): McpTool[] {
           ),
         pid: z.number().int().optional().describe("Your process PID."),
         hostname: z.string().optional().describe("Machine hostname."),
+        client_session_id: z
+          .string()
+          .optional()
+          .describe(
+            "Opaque client identifier (e.g. Claude Code's internal session UUID from ${CLAUDE_SESSION_ID}). Lets hooks resolve 'me' from stdin without knowing the human-friendly session_id.",
+          ),
       },
       handler: async (args) => {
-        const row = repo.registerSession({
-          id: args.session_id,
-          project: args.project,
-          branch: args.branch ?? null,
-          intent: args.intent ?? null,
-          pid: args.pid ?? null,
-          hostname: args.hostname ?? null,
-        });
+        let row;
+        try {
+          row = repo.registerSession({
+            id: args.session_id,
+            project: args.project,
+            branch: args.branch ?? null,
+            intent: args.intent ?? null,
+            pid: args.pid ?? null,
+            hostname: args.hostname ?? null,
+            client_session_id: args.client_session_id ?? null,
+          });
+        } catch (err) {
+          if (err instanceof ClientSessionConflictError) {
+            return {
+              ok: false,
+              reason: "client_session_id_conflict",
+              client_session_id: err.client_session_id,
+              held_by: err.held_by,
+              advice:
+                "Another claude-presence session is already mapped to this client_session_id. Use session_unregister on the stale session, or omit client_session_id to register without auto-resolution.",
+            };
+          }
+          throw err;
+        }
         const others = repo
           .listSessions(args.project)
           .filter((s) => s.id !== args.session_id);

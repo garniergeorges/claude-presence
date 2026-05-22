@@ -10,7 +10,7 @@
 set -euo pipefail
 
 INPUT="$(cat)"
-SESSION_ID="$(printf '%s' "$INPUT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+CLIENT_SESSION_ID="$(printf '%s' "$INPUT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
 CWD="$(printf '%s' "$INPUT" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
 
 if [ -z "${CWD:-}" ]; then
@@ -21,16 +21,27 @@ if ! command -v claude-presence >/dev/null 2>&1; then
   exit 0
 fi
 
+# Resolve "me": stdin gives Claude Code's internal session id, but claude-presence
+# stores the user-chosen one passed at /register time. The mapping was set up
+# when /register included client_session_id=${CLAUDE_SESSION_ID}. If no mapping
+# exists yet (legacy sessions, or /register not called), we degrade to the
+# generic counter without verbatim notification injection.
+PRESENCE_SESSION_ID=""
+if [ -n "${CLIENT_SESSION_ID:-}" ]; then
+  RESOLVE_JSON="$(claude-presence resolve-session --client "$CLIENT_SESSION_ID" --project "$CWD" --json 2>/dev/null || echo '{}')"
+  PRESENCE_SESSION_ID="$(printf '%s' "$RESOLVE_JSON" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+fi
+
 # Auto-refresh the session's branch if it has drifted since the last
 # register/refresh (typical case: the user ran `git checkout` between
 # two prompts). Idempotent and silent — no-op if branch is unchanged
 # or session unknown.
-if [ -n "${SESSION_ID:-}" ] && command -v git >/dev/null 2>&1; then
+if [ -n "${PRESENCE_SESSION_ID:-}" ] && command -v git >/dev/null 2>&1; then
   CURRENT_BRANCH="$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   if [ -n "${CURRENT_BRANCH:-}" ]; then
     claude-presence refresh-branch \
       --project "$CWD" \
-      --session "$SESSION_ID" \
+      --session "$PRESENCE_SESSION_ID" \
       --branch "$CURRENT_BRANCH" \
       --json >/dev/null 2>&1 || true
   fi
@@ -40,7 +51,7 @@ STATUS_JSON="$(claude-presence status --project "$CWD" --json 2>/dev/null || ech
 LOCKS_JSON="$(claude-presence locks --project "$CWD" --json 2>/dev/null || echo '[]')"
 
 OTHER_COUNT="$(printf '%s' "$STATUS_JSON" | grep -c '"id"' || true)"
-if [ -n "${SESSION_ID:-}" ] && printf '%s' "$STATUS_JSON" | grep -q "\"$SESSION_ID\""; then
+if [ -n "${PRESENCE_SESSION_ID:-}" ] && printf '%s' "$STATUS_JSON" | grep -q "\"$PRESENCE_SESSION_ID\""; then
   OTHER_COUNT=$((OTHER_COUNT - 1))
 fi
 LOCK_COUNT="$(printf '%s' "$LOCKS_JSON" | grep -c '"resource"' || true)"
@@ -49,13 +60,13 @@ LOCK_COUNT="$(printf '%s' "$LOCKS_JSON" | grep -c '"resource"' || true)"
 # Peek = no mark-as-read, so /inbox still shows them.
 INBOX_TEXT=""
 INBOX_COUNT=0
-if [ -n "${SESSION_ID:-}" ]; then
-  INBOX_JSON="$(claude-presence inbox --project "$CWD" --session "$SESSION_ID" --peek --json 2>/dev/null || echo '{}')"
+if [ -n "${PRESENCE_SESSION_ID:-}" ]; then
+  INBOX_JSON="$(claude-presence inbox --project "$CWD" --session "$PRESENCE_SESSION_ID" --peek --json 2>/dev/null || echo '{}')"
   INBOX_COUNT="$(printf '%s' "$INBOX_JSON" | sed -n 's/.*"unread_total"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -n 1)"
   INBOX_COUNT="${INBOX_COUNT:-0}"
 
   # Surface DMs and warning/urgent broadcasts as full text (not just a counter).
-  HIGH_JSON="$(claude-presence inbox --project "$CWD" --session "$SESSION_ID" --peek --min-priority warning --json 2>/dev/null || echo '{}')"
+  HIGH_JSON="$(claude-presence inbox --project "$CWD" --session "$PRESENCE_SESSION_ID" --peek --min-priority warning --json 2>/dev/null || echo '{}')"
   if printf '%s' "$HIGH_JSON" | grep -q '"messages"'; then
     INBOX_TEXT="$(node -e '
       let s = "";

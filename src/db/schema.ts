@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   hostname TEXT,
   started_at INTEGER NOT NULL,
   last_heartbeat INTEGER NOT NULL,
-  metadata TEXT
+  metadata TEXT,
+  client_session_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);

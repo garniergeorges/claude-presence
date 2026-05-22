@@ -7,6 +7,7 @@ const COMMANDS = [
   "locks",
   "inbox",
   "refresh-branch",
+  "resolve-session",
   "clear",
   "path",
   "help",
@@ -18,6 +19,7 @@ interface CliArgs {
   project?: string;
   session?: string;
   branch?: string;
+  client?: string;
   minPriority?: "info" | "warning" | "urgent";
   json: boolean;
   all: boolean;
@@ -31,6 +33,7 @@ function parseArgs(argv: string[]): CliArgs {
   let project: string | undefined;
   let session: string | undefined;
   let branch: string | undefined;
+  let client: string | undefined;
   let minPriority: CliArgs["minPriority"];
   let json = false;
   let all = false;
@@ -45,6 +48,8 @@ function parseArgs(argv: string[]): CliArgs {
       session = args[++i];
     } else if (a === "--branch" || a === "-b") {
       branch = args[++i];
+    } else if (a === "--client" || a === "-c") {
+      client = args[++i];
     } else if (a === "--min-priority") {
       const v = args[++i];
       if (v === "info" || v === "warning" || v === "urgent") minPriority = v;
@@ -64,6 +69,7 @@ function parseArgs(argv: string[]): CliArgs {
     project,
     session,
     branch,
+    client,
     minPriority,
     json,
     all,
@@ -225,6 +231,32 @@ function printRefreshBranch(repo: Repository, args: CliArgs) {
   else console.log(`Branch refreshed: ${existing.branch ?? "(none)"} → ${args.branch}.`);
 }
 
+function printResolveSession(repo: Repository, args: CliArgs) {
+  if (!args.client) {
+    const err = "resolve-session requires --client <id>";
+    if (args.json) {
+      console.log(JSON.stringify({ error: err }));
+    } else {
+      console.error(err);
+    }
+    process.exit(1);
+  }
+  const row = repo.findByClientSessionId(args.client, args.project);
+  const payload = row
+    ? { session_id: row.id, project: row.project, branch: row.branch }
+    : { session_id: null };
+  if (args.json) {
+    console.log(JSON.stringify(payload));
+    return;
+  }
+  if (row) {
+    console.log(row.id);
+  } else {
+    console.error("No session mapped to this client_session_id.");
+    process.exit(2);
+  }
+}
+
 function printHelp() {
   console.log(`claude-presence — inter-session coordination
 
@@ -236,6 +268,7 @@ Commands:
   locks               Show active resource locks
   inbox               Read messages for a session (requires --session, --project)
   refresh-branch      Update a session's branch if it has drifted (requires --session, --project, --branch)
+  resolve-session     Resolve a client_session_id (e.g. \${CLAUDE_SESSION_ID}) to its registered session id (requires --client)
   clear               Prune dead sessions and expired locks
   path                Print the SQLite database path
   help                Show this help
@@ -244,6 +277,7 @@ Options:
   --project <path>    Filter to a specific project
   --session <id>      Session id (inbox, refresh-branch)
   --branch <name>     Current git branch (refresh-branch)
+  --client <id>       Opaque client identifier (resolve-session)
   --min-priority <p>  Filter inbox by min priority (info|warning|urgent)
   --peek              (inbox) Read without marking as read
   --json              Output JSON
@@ -254,6 +288,7 @@ Examples:
   claude-presence locks --json
   claude-presence inbox --project /path/to/repo --session sess-A --peek --json
   claude-presence refresh-branch --project /path/to/repo --session sess-A --branch feat/foo
+  claude-presence resolve-session --client \$CLAUDE_SESSION_ID --project /path/to/repo --json
   claude-presence clear --all
 `);
 }
@@ -284,6 +319,8 @@ async function main() {
       printInbox(repo, args);
     } else if (command === "refresh-branch") {
       printRefreshBranch(repo, args);
+    } else if (command === "resolve-session") {
+      printResolveSession(repo, args);
     } else if (command === "clear") {
       const sessions = repo.pruneDeadSessions();
       const locks = repo.pruneExpiredLocks();
