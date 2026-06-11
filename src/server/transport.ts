@@ -14,6 +14,15 @@ interface ServerEntry {
   transport: StreamableHTTPServerTransport;
   /** Mutable: updated on every authenticated request before handleRequest */
   currentAuth: AuthContext | null;
+  /**
+   * The response of the session's current standalone SSE stream (GET /mcp).
+   * Tracked so a reconnect can evict a stale stream: when the old TCP
+   * connection dies silently (laptop sleep, network switch) the SDK never
+   * sees 'close', keeps the stream mapped, and answers every new GET with
+   * 409 "Only one SSE stream is allowed per session" — permanent reconnect
+   * loop. See deploy logs 2026-06-07/2026-06-11.
+   */
+  sseRes: ServerResponse | null;
 }
 
 export interface McpHttpHandlerOptions {
@@ -47,6 +56,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions) {
       server,
       transport: undefined as unknown as StreamableHTTPServerTransport,
       currentAuth: null,
+      sseRes: null,
     };
 
     if (guarded && options.audit) {
@@ -134,6 +144,24 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions) {
 
       if (entry) {
         entry.currentAuth = auth ?? null;
+      }
+
+      // Evict a stale standalone SSE stream before the SDK sees the new GET.
+      // Destroying the old response fires its 'close' handler inside the SDK,
+      // which unmaps the stream — without this, a silently-dropped connection
+      // makes every reconnect 409 until the TCP keepalive finally times out.
+      if (req.method === "GET" && entry) {
+        const stale = entry.sseRes;
+        if (stale && stale !== res && !stale.writableEnded && !stale.destroyed) {
+          log.warn("evicting stale SSE stream for reconnect", { sessionId });
+          stale.destroy();
+          // Let the SDK process the 'close' event before handling the new GET.
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        entry.sseRes = res;
+        res.on("close", () => {
+          if (entry!.sseRes === res) entry!.sseRes = null;
+        });
       }
 
       const body = req.method === "POST" ? await readBody(req) : undefined;
