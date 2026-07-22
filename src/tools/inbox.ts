@@ -35,16 +35,38 @@ export function inboxTools(repo: Repository): McpTool[] {
           .describe(
             "Optional tags for filtering (e.g. ['ci', 'refactor']).",
           ),
+        reply_to: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "Id of the inbox message this replies to. Unless to_session is set explicitly, the reply is addressed to that message's sender as a DM.",
+          ),
       },
       handler: async (args) => {
+        let to_session = args.to_session ?? null;
+        if (args.reply_to !== undefined) {
+          const original = repo.getInboxMessage(args.reply_to);
+          if (!original || original.project !== args.project) {
+            return {
+              ok: false,
+              reason: "reply_to_not_found",
+              advice:
+                "No message with this id exists on this project (it may have been pruned after the retention window). Post without reply_to instead.",
+            };
+          }
+          to_session = to_session ?? original.from_session;
+        }
         const row = repo.broadcast({
           project: args.project,
           from_session: args.session_id,
           from_branch: args.from_branch ?? null,
-          to_session: args.to_session ?? null,
+          to_session,
           priority: args.priority ?? "info",
           message: args.message,
           tags: args.tags ?? null,
+          reply_to: args.reply_to ?? null,
         });
         return { posted: formatInbox(row) };
       },

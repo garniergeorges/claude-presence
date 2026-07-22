@@ -98,6 +98,19 @@ describe("openDatabase migration — upgrades v0.2.1 schema in place", () => {
     db.close();
   });
 
+  it("adds reply_to to the existing inbox table, null on legacy rows", () => {
+    const db = openDatabase(dbPath);
+    const cols = db
+      .prepare("PRAGMA table_info(inbox)")
+      .all() as Array<{ name: string }>;
+    expect(cols.map((c) => c.name)).toContain("reply_to");
+    const legacy = db
+      .prepare("SELECT reply_to FROM inbox LIMIT 1")
+      .get() as { reply_to: number | null };
+    expect(legacy.reply_to).toBeNull();
+    db.close();
+  });
+
   it("creates idx_inbox_to_session after the column is added", () => {
     const db = openDatabase(dbPath);
     const indexes = db

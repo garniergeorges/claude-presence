@@ -392,6 +392,14 @@ Rétention :
 - **Boîte aux lettres** : purgée après 24 h.
 - **Audit log** : conservé indéfiniment ; à requêter et purger manuellement si besoin.
 
+Les défauts se règlent par variables d'environnement (valeurs en secondes, appliquées à tout process qui ouvre la base : serveur MCP, CLI, hooks) :
+
+```bash
+CLAUDE_PRESENCE_SESSION_TTL_SECONDS=86400      # rétention d'une session sans heartbeat
+CLAUDE_PRESENCE_LOCK_TTL_SECONDS=600           # TTL par défaut d'un verrou sans ttl_seconds
+CLAUDE_PRESENCE_INBOX_RETENTION_SECONDS=86400  # rétention des messages de la boîte aux lettres
+```
+
 ## Développement
 
 ```bash

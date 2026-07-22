@@ -392,6 +392,14 @@ Retention:
 - **Inbox**: pruned after 24 h.
 - **Audit log**: kept indefinitely; query and prune manually if needed.
 
+The defaults can be tuned with environment variables (values in seconds, applied to any process that opens the DB — MCP server, CLI, hooks):
+
+```bash
+CLAUDE_PRESENCE_SESSION_TTL_SECONDS=86400      # session retention without heartbeat
+CLAUDE_PRESENCE_LOCK_TTL_SECONDS=600           # default lock TTL when a claim has no ttl_seconds
+CLAUDE_PRESENCE_INBOX_RETENTION_SECONDS=86400  # inbox message retention
+```
+
 ## Development
 
 ```bash

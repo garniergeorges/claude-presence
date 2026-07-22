@@ -39,6 +39,7 @@ export interface InboxRow {
   message: string;
   tags: string | null;
   created_at: number;
+  reply_to: number | null;
 }
 
 export function getDefaultDbPath(): string {
@@ -85,6 +86,9 @@ function migrateInbox(db: Database.Database): void {
   }
   if (!has("priority")) {
     db.exec("ALTER TABLE inbox ADD COLUMN priority TEXT NOT NULL DEFAULT 'info'");
+  }
+  if (!has("reply_to")) {
+    db.exec("ALTER TABLE inbox ADD COLUMN reply_to INTEGER");
   }
   // Always (re)attempt the index — IF NOT EXISTS handles fresh DBs and
   // re-opens after the columns were added. Kept out of SCHEMA_SQL so the
