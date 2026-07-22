@@ -311,6 +311,8 @@ Claude Code runs every command in the array in order. Both tools get their turn.
 claude-presence status              # Show all active sessions
 claude-presence status --project .  # Filter to current project
 claude-presence locks               # Show active resource locks
+claude-presence dashboard           # Sessions + locks + unread counts, grouped by project
+claude-presence dashboard --watch   # Same, refreshed in place (--interval <s>, default 5)
 claude-presence clear               # Prune dead sessions (TTL or dead local process) and expired locks
 claude-presence clear --session x   # Remove one session explicitly (--client <uuid> also works)
 claude-presence path                # Print the SQLite DB path
