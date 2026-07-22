@@ -6,6 +6,7 @@ import { Repository } from "../db/repository.js";
 const COMMANDS = [
   "status",
   "locks",
+  "dashboard",
   "inbox",
   "refresh-branch",
   "resolve-session",
@@ -14,6 +15,8 @@ const COMMANDS = [
   "help",
 ] as const;
 type Command = (typeof COMMANDS)[number];
+
+const WATCHABLE: Command[] = ["status", "locks", "dashboard"];
 
 interface CliArgs {
   command: Command;
@@ -26,6 +29,8 @@ interface CliArgs {
   all: boolean;
   unreadOnly: boolean;
   peek: boolean;
+  watch: boolean;
+  interval: number;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -40,6 +45,8 @@ function parseArgs(argv: string[]): CliArgs {
   let all = false;
   let unreadOnly = true;
   let peek = false;
+  let watch = false;
+  let interval = 5;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -63,6 +70,11 @@ function parseArgs(argv: string[]): CliArgs {
       unreadOnly = false;
     } else if (a === "--peek") {
       peek = true;
+    } else if (a === "--watch" || a === "-w") {
+      watch = true;
+    } else if (a === "--interval") {
+      const v = Number(args[++i]);
+      if (Number.isFinite(v) && v >= 1) interval = Math.round(v);
     }
   }
   return {
@@ -76,6 +88,8 @@ function parseArgs(argv: string[]): CliArgs {
     all,
     unreadOnly,
     peek,
+    watch,
+    interval,
   };
 }
 
@@ -151,6 +165,63 @@ function printLocks(repo: Repository, project: string | undefined, json: boolean
     if (l.reason) console.log(`    reason  : ${l.reason}`);
     console.log(`    since   : ${formatRelative(l.acquired_at)}`);
     console.log(`    expires : in ${remaining}s`);
+    console.log("");
+  }
+}
+
+function printDashboard(repo: Repository, project: string | undefined, json: boolean) {
+  const sessions = repo.listSessions(project);
+  const locks = repo.listLocks(project);
+  const projects = [
+    ...new Set([...sessions.map((s) => s.project), ...locks.map((l) => l.project)]),
+  ].sort();
+  const data = projects.map((p) => ({
+    project: p,
+    sessions: sessions
+      .filter((s) => s.project === p)
+      .map((s) => ({
+        id: s.id,
+        branch: s.branch,
+        intent: s.intent,
+        last_heartbeat: s.last_heartbeat,
+        unread: repo.readInbox({
+          project: p,
+          session_id: s.id,
+          unread_only: true,
+          peek: true,
+          limit: 1,
+        }).unread_total,
+      })),
+    locks: locks.filter((l) => l.project === p),
+  }));
+
+  if (json) {
+    console.log(JSON.stringify({ projects: data }, null, 2));
+    return;
+  }
+  if (data.length === 0) {
+    console.log("Nothing to show: no active sessions or locks.");
+    return;
+  }
+  for (const proj of data) {
+    console.log(`Project ${proj.project}`);
+    console.log(`  Sessions (${proj.sessions.length}):`);
+    for (const s of proj.sessions) {
+      const unread = s.unread > 0 ? `  [${s.unread} unread]` : "";
+      console.log(
+        `    • ${s.id}${s.branch ? `  on ${s.branch}` : ""}  (seen ${formatRelative(s.last_heartbeat)})${unread}`,
+      );
+      if (s.intent) console.log(`      intent: ${s.intent}`);
+    }
+    if (proj.locks.length > 0) {
+      console.log(`  Locks (${proj.locks.length}):`);
+      for (const l of proj.locks) {
+        const remaining = Math.max(0, Math.round((l.expires_at - Date.now()) / 1000));
+        console.log(
+          `    • ${l.resource}  held by ${l.session_id}  (expires in ${remaining}s)${l.reason ? `  reason: ${l.reason}` : ""}`,
+        );
+      }
+    }
     console.log("");
   }
 }
@@ -288,6 +359,7 @@ Usage:
 Commands:
   status              Show active sessions (default)
   locks               Show active resource locks
+  dashboard           Combined view: sessions, locks and unread counts per project
   inbox               Read messages for a session (requires --session, --project)
   refresh-branch      Update a session's branch if it has drifted (requires --session, --project, --branch)
   resolve-session     Resolve a client_session_id (e.g. \${CLAUDE_SESSION_ID}) to its registered session id (requires --client)
@@ -305,10 +377,13 @@ Options:
   --peek              (inbox) Read without marking as read
   --json              Output JSON
   --all               (clear) include inbox cleanup; (inbox) include already-read
+  --watch, -w         (status, locks, dashboard) refresh continuously in the terminal
+  --interval <s>      Refresh period for --watch, in seconds (default 5)
 
 Examples:
   claude-presence status
   claude-presence locks --json
+  claude-presence dashboard --watch --interval 10
   claude-presence inbox --project /path/to/repo --session sess-A --peek --json
   claude-presence refresh-branch --project /path/to/repo --session sess-A --branch feat/foo
   claude-presence resolve-session --client \$CLAUDE_SESSION_ID --project /path/to/repo --json
@@ -336,10 +411,29 @@ async function main() {
   const repo = new Repository(db);
 
   try {
+    if (args.watch && WATCHABLE.includes(command)) {
+      if (json) {
+        console.error("--watch cannot be combined with --json");
+        process.exit(1);
+      }
+      for (;;) {
+        console.clear();
+        console.log(
+          `claude-presence ${command} — refresh every ${args.interval}s, Ctrl+C to quit\n`,
+        );
+        if (command === "status") printStatus(repo, project, false);
+        else if (command === "locks") printLocks(repo, project, false);
+        else printDashboard(repo, project, false);
+        await new Promise((r) => setTimeout(r, args.interval * 1000));
+      }
+    }
+
     if (command === "status") {
       printStatus(repo, project, json);
     } else if (command === "locks") {
       printLocks(repo, project, json);
+    } else if (command === "dashboard") {
+      printDashboard(repo, project, json);
     } else if (command === "inbox") {
       printInbox(repo, args);
     } else if (command === "refresh-branch") {
