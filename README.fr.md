@@ -81,7 +81,7 @@ C'est toute la boucle. Tout le reste ci-dessous, c'est du détail.
 - **CLI** — `claude-presence status` montre les sessions actives hors Claude Code
 - **Zéro démon (mode stdio)** — adossé à SQLite, sans port, sans processus en arrière-plan pour l'usage solo / mono-machine
 - **Mode équipe (v0.2+)** — serveur HTTP auto-hébergé optionnel avec auth bearer-token et RBAC pour coordonner plusieurs machines
-- **Rafraîchissement auto de la branche** — quand l'utilisateur fait `git checkout`, la branche stockée est mise à jour silencieusement au prompt suivant
+- **Rafraîchissement auto de la branche** — quand l'utilisateur fait `git checkout`, la branche stockée est mise à jour silencieusement au prompt suivant ; arriver sur une branche déjà occupée par une autre session déclenche un avertissement visible
 - **Notifications auto-surfacées** — tout message non lu adressé à ta session (DM ou broadcast, toutes priorités) est annoncé visuellement par une bannière `🔔 claude-presence: N unread message(s)` au-dessus de la réponse suivante, et le contenu complet est passé au modèle pour qu'il puisse répondre précisément si tu lui poses la question. Sans avoir à taper `/inbox`.
 - **Nettoyage par TTL** — les sessions sans heartbeat depuis 24 heures sont purgées automatiquement
 

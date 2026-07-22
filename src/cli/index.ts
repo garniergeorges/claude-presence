@@ -315,13 +315,23 @@ function printRefreshBranch(repo: Repository, args: CliArgs) {
     hostname: existing.hostname,
   });
 
+  const sameBranch = repo
+    .listSessions(existing.project)
+    .filter((s) => s.id !== args.session && s.branch === args.branch)
+    .map((s) => s.id);
   const result = {
     changed: true,
     from: existing.branch,
     to: args.branch,
+    ...(sameBranch.length > 0 ? { same_branch: sameBranch } : {}),
   };
   if (args.json) console.log(JSON.stringify(result));
-  else console.log(`Branch refreshed: ${existing.branch ?? "(none)"} → ${args.branch}.`);
+  else {
+    console.log(`Branch refreshed: ${existing.branch ?? "(none)"} → ${args.branch}.`);
+    if (sameBranch.length > 0) {
+      console.log(`⚠️ Also on '${args.branch}': ${sameBranch.join(", ")}.`);
+    }
+  }
 }
 
 function printResolveSession(repo: Repository, args: CliArgs) {

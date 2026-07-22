@@ -39,16 +39,19 @@ fi
 
 # Auto-refresh the session's branch if it has drifted since the last
 # register/refresh (typical case: the user ran `git checkout` between
-# two prompts). Idempotent and silent — no-op if branch is unchanged
-# or session unknown.
+# two prompts). Idempotent — no-op if branch is unchanged or session
+# unknown. When the refresh lands on a branch another session is already
+# working on, the JSON carries same_branch:[ids] and we surface a banner.
+SAME_BRANCH_IDS=""
 if [ -n "${PRESENCE_SESSION_ID:-}" ] && command -v git >/dev/null 2>&1; then
   CURRENT_BRANCH="$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   if [ -n "${CURRENT_BRANCH:-}" ]; then
-    claude-presence refresh-branch \
+    REFRESH_JSON="$(claude-presence refresh-branch \
       --project "$CWD" \
       --session "$PRESENCE_SESSION_ID" \
       --branch "$CURRENT_BRANCH" \
-      --json >/dev/null 2>&1 || true
+      --json 2>/dev/null || echo '{}')"
+    SAME_BRANCH_IDS="$(printf '%s' "$REFRESH_JSON" | sed -n 's/.*"same_branch"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' | tr -d '"')"
   fi
 fi
 
@@ -123,6 +126,15 @@ SYSTEM_MSG=""
 if [ -n "$INBOX_TEXT" ]; then
   SYSTEM_MSG="🔔 claude-presence: ${INBOX_COUNT} unread message(s) — see below"
 fi
+if [ -n "$SAME_BRANCH_IDS" ] && [ -n "${CURRENT_BRANCH:-}" ]; then
+  BRANCH_MSG="⚠️ claude-presence: also on '${CURRENT_BRANCH}': ${SAME_BRANCH_IDS}"
+  if [ -n "$SYSTEM_MSG" ]; then
+    SYSTEM_MSG="${SYSTEM_MSG}
+${BRANCH_MSG}"
+  else
+    SYSTEM_MSG="$BRANCH_MSG"
+  fi
+fi
 
 # additionalContext: full detail passed silently to the model so it can
 # answer accurately if the user asks about pending notifications.
@@ -133,6 +145,11 @@ Pending notifications (peek, still unread — call read_inbox to mark as read):
 ${INBOX_TEXT}"
 else
   CONTEXT="${SUMMARY} Call session_list, resource_list, or read_inbox for details before shared operations."
+fi
+if [ -n "$SAME_BRANCH_IDS" ] && [ -n "${CURRENT_BRANCH:-}" ]; then
+  CONTEXT="${CONTEXT}
+
+Same-branch overlap: session(s) ${SAME_BRANCH_IDS} also working on '${CURRENT_BRANCH}'. Coordinate before committing or pushing."
 fi
 
 # JSON-escape both payloads.
