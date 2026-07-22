@@ -311,7 +311,8 @@ Claude Code exécute chaque commande du tableau dans l'ordre. Les deux outils s'
 claude-presence status              # Montre toutes les sessions actives
 claude-presence status --project .  # Filtre sur le projet courant
 claude-presence locks               # Montre les verrous actifs
-claude-presence clear               # Purge les sessions mortes et verrous expirés
+claude-presence clear               # Purge les sessions mortes (TTL ou process local mort) et verrous expirés
+claude-presence clear --session x   # Retire une session précise (--client <uuid> marche aussi)
 claude-presence path                # Affiche le chemin de la base SQLite
 claude-presence help                # Aide
 ```

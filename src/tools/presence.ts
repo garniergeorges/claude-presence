@@ -115,12 +115,27 @@ export function presenceTools(repo: Repository): McpTool[] {
     {
       name: "session_unregister",
       description:
-        "Cleanly remove this session from the registry (also releases any locks it held).",
+        "Cleanly remove a session from the registry (also releases any locks it held). Identify it by session_id, or by client_session_id when only the client UUID is known (e.g. cleaning up a stale mapping after a client_session_id_conflict).",
       inputShape: {
-        session_id: z.string().min(1),
+        session_id: z.string().min(1).optional(),
+        client_session_id: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Remove the session mapped to this opaque client identifier instead of naming it by session_id.",
+          ),
       },
       handler: async (args) => {
-        return repo.unregisterSession(args.session_id);
+        if (args.session_id) return repo.unregisterSession(args.session_id);
+        if (args.client_session_id) {
+          return repo.unregisterByClientSessionId(args.client_session_id);
+        }
+        return {
+          removed: false,
+          reason: "missing_argument",
+          advice: "Provide session_id or client_session_id.",
+        };
       },
     },
     {

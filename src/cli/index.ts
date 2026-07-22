@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { hostname } from "node:os";
 import { openDatabase, getDefaultDbPath } from "../db/index.js";
 import { Repository } from "../db/repository.js";
 
@@ -76,6 +77,27 @@ function parseArgs(argv: string[]): CliArgs {
     unreadOnly,
     peek,
   };
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function pruneDeadPidSessions(repo: Repository): string[] {
+  const host = hostname();
+  const removed: string[] = [];
+  for (const s of repo.listSessions()) {
+    if (s.hostname === host && s.pid && !isPidAlive(s.pid)) {
+      repo.unregisterSession(s.id);
+      removed.push(s.id);
+    }
+  }
+  return removed;
 }
 
 function formatRelative(ms: number): string {
@@ -269,15 +291,16 @@ Commands:
   inbox               Read messages for a session (requires --session, --project)
   refresh-branch      Update a session's branch if it has drifted (requires --session, --project, --branch)
   resolve-session     Resolve a client_session_id (e.g. \${CLAUDE_SESSION_ID}) to its registered session id (requires --client)
-  clear               Prune dead sessions and expired locks
+  clear               Prune dead sessions (TTL or dead local process) and expired locks;
+                      with --session <id> or --client <id>, remove one session explicitly
   path                Print the SQLite database path
   help                Show this help
 
 Options:
   --project <path>    Filter to a specific project
-  --session <id>      Session id (inbox, refresh-branch)
+  --session <id>      Session id (inbox, refresh-branch, clear)
   --branch <name>     Current git branch (refresh-branch)
-  --client <id>       Opaque client identifier (resolve-session)
+  --client <id>       Opaque client identifier (resolve-session, clear)
   --min-priority <p>  Filter inbox by min priority (info|warning|urgent)
   --peek              (inbox) Read without marking as read
   --json              Output JSON
@@ -290,6 +313,8 @@ Examples:
   claude-presence refresh-branch --project /path/to/repo --session sess-A --branch feat/foo
   claude-presence resolve-session --client \$CLAUDE_SESSION_ID --project /path/to/repo --json
   claude-presence clear --all
+  claude-presence clear --session sess-A
+  claude-presence clear --client \$CLAUDE_SESSION_ID
 `);
 }
 
@@ -322,20 +347,42 @@ async function main() {
     } else if (command === "resolve-session") {
       printResolveSession(repo, args);
     } else if (command === "clear") {
+      if (args.session || args.client) {
+        const result = args.session
+          ? repo.unregisterSession(args.session)
+          : repo.unregisterByClientSessionId(args.client!);
+        if (json) {
+          console.log(JSON.stringify(result));
+        } else if (result.removed) {
+          const removedId =
+            "session_id" in result ? result.session_id : args.session;
+          console.log(`Removed session '${removedId}'.`);
+        } else {
+          console.error("Session not found; nothing removed.");
+          process.exitCode = 2;
+        }
+        return;
+      }
       const sessions = repo.pruneDeadSessions();
+      const deadPid = pruneDeadPidSessions(repo);
       const locks = repo.pruneExpiredLocks();
       const inbox = all ? repo.pruneOldInbox() : 0;
       if (json) {
         console.log(
           JSON.stringify(
-            { pruned_sessions: sessions, pruned_locks: locks, pruned_inbox: inbox },
+            {
+              pruned_sessions: sessions,
+              pruned_dead_pid_sessions: deadPid,
+              pruned_locks: locks,
+              pruned_inbox: inbox,
+            },
             null,
             2,
           ),
         );
       } else {
         console.log(
-          `Pruned: ${sessions} dead session(s), ${locks} expired lock(s)${all ? `, ${inbox} old inbox message(s)` : ""}.`,
+          `Pruned: ${sessions} dead session(s), ${deadPid.length} dead-process session(s), ${locks} expired lock(s)${all ? `, ${inbox} old inbox message(s)` : ""}.`,
         );
       }
     }

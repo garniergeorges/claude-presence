@@ -256,6 +256,19 @@ export class Repository {
     return { removed: false, reason: "session_not_found" };
   }
 
+  unregisterByClientSessionId(clientSessionId: string): {
+    removed: boolean;
+    session_id?: string;
+    reason?: string;
+  } {
+    const row = this.db
+      .prepare("SELECT id FROM sessions WHERE client_session_id = ?")
+      .get(clientSessionId) as { id: string } | undefined;
+    if (!row) return { removed: false, reason: "session_not_found" };
+    this.db.prepare("DELETE FROM sessions WHERE id = ?").run(row.id);
+    return { removed: true, session_id: row.id };
+  }
+
   getSession(sessionId: string): SessionRow | undefined {
     return this.db
       .prepare("SELECT * FROM sessions WHERE id = ?")
