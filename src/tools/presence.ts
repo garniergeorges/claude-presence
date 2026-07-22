@@ -66,13 +66,21 @@ export function presenceTools(repo: Repository): McpTool[] {
         const others = repo
           .listSessions(args.project)
           .filter((s) => s.id !== args.session_id);
+        const sameBranch = others.filter(
+          (s) => row.branch && s.branch === row.branch,
+        );
         return {
           registered: formatSession(row),
           other_sessions_on_same_project: others.map(formatSession),
+          ...(sameBranch.length > 0
+            ? { same_branch_sessions: sameBranch.map((s) => s.id) }
+            : {}),
           advice:
-            others.length > 0
-              ? `⚠️ ${others.length} other session(s) active on this project. Check session_list / resource_list before making shared changes.`
-              : "No other sessions currently active on this project.",
+            sameBranch.length > 0
+              ? `⚠️ ${sameBranch.map((s) => s.id).join(", ")} ${sameBranch.length > 1 ? "are" : "is"} already working on branch '${row.branch}'. Coordinate before committing or pushing: you may overwrite each other's work.`
+              : others.length > 0
+                ? `⚠️ ${others.length} other session(s) active on this project. Check session_list / resource_list before making shared changes.`
+                : "No other sessions currently active on this project.",
         };
       },
     },

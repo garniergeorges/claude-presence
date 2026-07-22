@@ -81,7 +81,7 @@ That's the whole loop. Everything below is detail.
 - **CLI** — `claude-presence status` shows active sessions outside Claude Code
 - **Zero daemon (stdio mode)** — SQLite-backed, no port, no background process for solo / single-machine use
 - **Team mode (v0.2+)** — optional self-hosted HTTP server with bearer-token auth and RBAC for coordination across machines
-- **Auto branch refresh** — when the user runs `git checkout`, the session's stored branch is updated transparently on the next prompt
+- **Auto branch refresh** — when the user runs `git checkout`, the session's stored branch is updated transparently on the next prompt; landing on a branch another session is already working on triggers a visible warning
 - **Auto-surfaced notifications** — any unread message addressed to your session (DM or broadcast, all priorities) is announced visually with a `🔔 claude-presence: N unread message(s)` banner above the next reply, plus the full content is passed to the model so it can answer accurately if you ask about it. No manual `/inbox` needed.
 - **TTL-based cleanup** — sessions with no heartbeat for 24 hours are removed automatically
 
