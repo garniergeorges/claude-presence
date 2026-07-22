@@ -75,6 +75,9 @@ describe("openDatabase migration — upgrades v0.2.1 schema in place", () => {
     seed.prepare(
       "INSERT INTO inbox (project, from_session, message, created_at) VALUES (?, ?, ?, ?)",
     ).run("/repo", "alice", "legacy message", Date.now());
+    seed.prepare(
+      "INSERT INTO resource_locks (resource, project, session_id, acquired_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ci", "/repo", "alice", Date.now(), Date.now() + 600_000);
     seed.close();
   });
 
@@ -119,6 +122,35 @@ describe("openDatabase migration — upgrades v0.2.1 schema in place", () => {
     expect(inbox.messages[0].message).toBe("legacy message");
     expect(inbox.messages[0].priority).toBe("info");
     expect(inbox.messages[0].to_session).toBeNull();
+    db.close();
+  });
+
+  it("adds ttl_seconds to the existing resource_locks table", () => {
+    const db = openDatabase(dbPath);
+    const cols = db
+      .prepare("PRAGMA table_info(resource_locks)")
+      .all() as Array<{ name: string }>;
+    expect(cols.map((c) => c.name)).toContain("ttl_seconds");
+    db.close();
+  });
+
+  it("creates the lock_waiters table", () => {
+    const db = openDatabase(dbPath);
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name: string }>;
+    expect(tables.map((t) => t.name)).toContain("lock_waiters");
+    db.close();
+  });
+
+  it("renews a legacy lock (no ttl_seconds) using the default TTL", () => {
+    const db = openDatabase(dbPath);
+    const repo = new Repository(db);
+    const before = repo.listLocks("/repo")[0];
+    const hb = repo.heartbeat("alice", undefined, { renew_locks: true });
+    expect(hb).toEqual({ ok: true, renewed_locks: 1 });
+    const after = repo.listLocks("/repo")[0];
+    expect(after.expires_at).toBeGreaterThanOrEqual(before.expires_at);
     db.close();
   });
 

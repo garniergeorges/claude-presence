@@ -90,6 +90,12 @@ export function presenceTools(repo: Repository): McpTool[] {
           ),
         recreate_branch: z.string().optional(),
         recreate_intent: z.string().optional(),
+        renew_locks: z
+          .boolean()
+          .optional()
+          .describe(
+            "Also push back the expiry of every lock this session holds, each by its own TTL. Useful during long operations to keep claims alive without re-claiming.",
+          ),
       },
       handler: async (args) => {
         const recreateWith = args.recreate_project
@@ -100,7 +106,9 @@ export function presenceTools(repo: Repository): McpTool[] {
               intent: args.recreate_intent ?? null,
             }
           : undefined;
-        const result = repo.heartbeat(args.session_id, recreateWith);
+        const result = repo.heartbeat(args.session_id, recreateWith, {
+          renew_locks: args.renew_locks,
+        });
         return { ...result, at: new Date().toISOString() };
       },
     },

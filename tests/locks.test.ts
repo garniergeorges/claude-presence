@@ -152,3 +152,221 @@ describe("Repository — resource locks", () => {
     expect(r.session_recreated).toBeUndefined();
   });
 });
+
+describe("Repository — lock waiting queue", () => {
+  let repo: Repository;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    ({ repo, db } = freshRepo());
+    repo.registerSession({ id: "sess-A", project: "/repo" });
+    repo.registerSession({ id: "sess-B", project: "/repo" });
+    repo.registerSession({ id: "sess-C", project: "/repo" });
+    repo.claimResource({ resource: "ci", project: "/repo", session_id: "sess-A" });
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.useRealTimers();
+  });
+
+  const claimWait = (session_id: string) =>
+    repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id,
+      wait: true,
+    });
+
+  const unreadFor = (session_id: string) =>
+    repo.readInbox({ project: "/repo", session_id, unread_only: true }).messages;
+
+  it("wait=true enqueues and returns the queue position", () => {
+    const b = claimWait("sess-B");
+    const c = claimWait("sess-C");
+    expect(b).toMatchObject({ ok: false, queued: true, queue_position: 1 });
+    expect(c).toMatchObject({ ok: false, queued: true, queue_position: 2 });
+    expect(repo.getWaiters("/repo", "ci").map((w) => w.session_id)).toEqual([
+      "sess-B",
+      "sess-C",
+    ]);
+  });
+
+  it("a failed claim without wait does not enqueue", () => {
+    const b = repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-B",
+    });
+    expect(b.ok).toBe(false);
+    expect(b.queued).toBeUndefined();
+    expect(repo.getWaiters("/repo", "ci")).toHaveLength(0);
+  });
+
+  it("re-requesting wait keeps the original position", () => {
+    claimWait("sess-B");
+    claimWait("sess-C");
+    const again = claimWait("sess-B");
+    expect(again.queue_position).toBe(1);
+    expect(repo.getWaiters("/repo", "ci")).toHaveLength(2);
+  });
+
+  it("release notifies the first waiter via inbox DM and dequeues it", () => {
+    claimWait("sess-B");
+    claimWait("sess-C");
+    const released = repo.releaseResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+    });
+    expect(released).toEqual({ released: true, notified_waiter: "sess-B" });
+
+    const messages = unreadFor("sess-B");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].to_session).toBe("sess-B");
+    expect(messages[0].priority).toBe("warning");
+    expect(messages[0].from_session).toBe("sess-A");
+    expect(messages[0].message).toContain("released");
+
+    expect(unreadFor("sess-C")).toHaveLength(0);
+    expect(repo.getWaiters("/repo", "ci").map((w) => w.session_id)).toEqual([
+      "sess-C",
+    ]);
+  });
+
+  it("release without waiters returns no notified_waiter", () => {
+    const released = repo.releaseResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+    });
+    expect(released).toEqual({ released: true });
+  });
+
+  it("a successful claim removes the session from the queue", () => {
+    claimWait("sess-B");
+    repo.releaseResource({ resource: "ci", project: "/repo", session_id: "sess-A" });
+    const r = repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-B",
+    });
+    expect(r.ok).toBe(true);
+    expect(repo.getWaiters("/repo", "ci")).toHaveLength(0);
+  });
+
+  it("an expired lock notifies the first waiter on the next prune", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+      ttl_seconds: 5,
+    });
+    claimWait("sess-B");
+
+    vi.setSystemTime(new Date(Date.now() + 10_000));
+    repo.listLocks("/repo");
+
+    const messages = unreadFor("sess-B");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].message).toContain("expired");
+    expect(repo.getWaiters("/repo", "ci")).toHaveLength(0);
+  });
+
+  it("first waiter claiming an expired lock is dequeued silently", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+      ttl_seconds: 5,
+    });
+    claimWait("sess-B");
+
+    vi.setSystemTime(new Date(Date.now() + 10_000));
+    const r = repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-B",
+    });
+    expect(r.ok).toBe(true);
+    expect(unreadFor("sess-B")).toHaveLength(0);
+    expect(repo.getWaiters("/repo", "ci")).toHaveLength(0);
+  });
+
+  it("waiters are cascade-deleted with their session", () => {
+    claimWait("sess-B");
+    repo.unregisterSession("sess-B");
+    const released = repo.releaseResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+    });
+    expect(released).toEqual({ released: true });
+    expect(repo.getWaiters("/repo", "ci")).toHaveLength(0);
+  });
+});
+
+describe("Repository — lock renewal via heartbeat", () => {
+  let repo: Repository;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    ({ repo, db } = freshRepo());
+    repo.registerSession({ id: "sess-A", project: "/repo" });
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.useRealTimers();
+  });
+
+  it("renew_locks pushes back expiry by the lock's own ttl", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const claimed = repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+      ttl_seconds: 60,
+    });
+
+    vi.setSystemTime(new Date(Date.now() + 30_000));
+    const hb = repo.heartbeat("sess-A", undefined, { renew_locks: true });
+    expect(hb).toEqual({ ok: true, renewed_locks: 1 });
+
+    const lock = repo.listLocks("/repo")[0];
+    expect(lock.expires_at).toBe(claimed.lock!.expires_at + 30_000);
+  });
+
+  it("renew_locks does not resurrect an already-expired lock", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+      ttl_seconds: 5,
+    });
+
+    vi.setSystemTime(new Date(Date.now() + 10_000));
+    const hb = repo.heartbeat("sess-A", undefined, { renew_locks: true });
+    expect(hb).toEqual({ ok: true, renewed_locks: 0 });
+    expect(repo.listLocks("/repo")).toHaveLength(0);
+  });
+
+  it("heartbeat without renew_locks leaves lock expiry untouched", () => {
+    const claimed = repo.claimResource({
+      resource: "ci",
+      project: "/repo",
+      session_id: "sess-A",
+      ttl_seconds: 60,
+    });
+    const hb = repo.heartbeat("sess-A");
+    expect(hb).toEqual({ ok: true });
+    expect(repo.listLocks("/repo")[0].expires_at).toBe(claimed.lock!.expires_at);
+  });
+});

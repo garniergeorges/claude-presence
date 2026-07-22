@@ -23,12 +23,24 @@ CREATE TABLE IF NOT EXISTS resource_locks (
   reason TEXT,
   acquired_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
+  ttl_seconds INTEGER,
   PRIMARY KEY (project, resource),
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_locks_expires ON resource_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_locks_session ON resource_locks(session_id);
+
+CREATE TABLE IF NOT EXISTS lock_waiters (
+  project TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  requested_at INTEGER NOT NULL,
+  PRIMARY KEY (project, resource, session_id),
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_waiters_resource ON lock_waiters(project, resource);
 
 CREATE TABLE IF NOT EXISTS inbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

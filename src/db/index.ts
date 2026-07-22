@@ -25,6 +25,14 @@ export interface ResourceLockRow {
   reason: string | null;
   acquired_at: number;
   expires_at: number;
+  ttl_seconds: number | null;
+}
+
+export interface LockWaiterRow {
+  project: string;
+  resource: string;
+  session_id: string;
+  requested_at: number;
 }
 
 export type InboxPriority = "info" | "warning" | "urgent";
@@ -59,7 +67,18 @@ export function openDatabase(dbPath: string = getDefaultDbPath()): Database.Data
   db.exec(SCHEMA_SQL);
   migrateInbox(db);
   migrateSessions(db);
+  migrateLocks(db);
   return db;
+}
+
+function migrateLocks(db: Database.Database): void {
+  const cols = db
+    .prepare("PRAGMA table_info(resource_locks)")
+    .all() as Array<{ name: string }>;
+  const has = (name: string) => cols.some((c) => c.name === name);
+  if (!has("ttl_seconds")) {
+    db.exec("ALTER TABLE resource_locks ADD COLUMN ttl_seconds INTEGER");
+  }
 }
 
 function migrateSessions(db: Database.Database): void {
