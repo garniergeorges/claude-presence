@@ -296,11 +296,11 @@ Claude Code exécute chaque commande du tableau dans l'ordre. Les deux outils s'
 | Outil | Rôle |
 |---|---|
 | `session_register` | Déclare cette session (projet, branche, intention) |
-| `session_heartbeat` | Garde la session vivante |
+| `session_heartbeat` | Garde la session vivante (renouvelle aussi les verrous détenus avec `renew_locks: true`) |
 | `session_unregister` | Sortie propre |
 | `session_list` | Liste les sessions actives sur le même projet |
-| `resource_claim` | Acquiert un verrou consultatif sur une ressource nommée |
-| `resource_release` | Libère un verrou |
+| `resource_claim` | Acquiert un verrou consultatif sur une ressource nommée (`wait: true` rejoint la file d'attente) |
+| `resource_release` | Libère un verrou (le premier en file d'attente reçoit une notification inbox) |
 | `resource_list` | Liste les verrous actifs |
 | `broadcast` | Poste un message dans la boîte aux lettres du projet |
 | `read_inbox` | Lit les messages récents |

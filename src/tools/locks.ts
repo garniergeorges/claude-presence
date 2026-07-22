@@ -29,6 +29,12 @@ export function lockTools(repo: Repository): McpTool[] {
           .max(24 * 3600)
           .optional()
           .describe("How long the lock stays valid without renewal. Default 600 (10 min), max 86400 (24h)."),
+        wait: z
+          .boolean()
+          .optional()
+          .describe(
+            "If the resource is already claimed, join the waiting queue. The first waiter receives an inbox notification (surfaced at the next prompt) when the lock is released or expires.",
+          ),
       },
       handler: async (args) => {
         const result = repo.claimResource({
@@ -38,6 +44,7 @@ export function lockTools(repo: Repository): McpTool[] {
           branch: args.branch ?? null,
           reason: args.reason ?? null,
           ttl_seconds: args.ttl_seconds,
+          wait: args.wait,
         });
 
         if (!result.ok && result.held_by) {
@@ -45,7 +52,9 @@ export function lockTools(repo: Repository): McpTool[] {
           const heldBySession = repo.getSession(holder.session_id);
           return {
             ok: false,
-            message: `Resource '${args.resource}' is already claimed by another session. Consider waiting, coordinating via broadcast, or asking the user before proceeding.`,
+            message: result.queued
+              ? `Resource '${args.resource}' is already claimed by another session. You are #${result.queue_position} in the waiting queue and will get an inbox notification when it frees up.`
+              : `Resource '${args.resource}' is already claimed by another session. Consider retrying with wait=true to join the queue, coordinating via broadcast, or asking the user before proceeding.`,
             held_by: formatLock(holder),
             holder_session: heldBySession
               ? {
@@ -54,6 +63,9 @@ export function lockTools(repo: Repository): McpTool[] {
                   intent: heldBySession.intent,
                 }
               : null,
+            ...(result.queued
+              ? { queued: true, queue_position: result.queue_position }
+              : {}),
             ...(result.session_recreated
               ? { session_recreated: true }
               : {}),
@@ -92,6 +104,12 @@ export function lockTools(repo: Repository): McpTool[] {
           session_id: args.session_id,
           force: args.force,
         });
+        if (result.released && result.notified_waiter) {
+          return {
+            ...result,
+            message: `Waiting session '${result.notified_waiter}' was notified that the resource is free.`,
+          };
+        }
         return result;
       },
     },
@@ -109,7 +127,15 @@ export function lockTools(repo: Repository): McpTool[] {
         const locks = repo.listLocks(args.project);
         return {
           count: locks.length,
-          locks: locks.map(formatLock),
+          locks: locks.map((lock) => {
+            const waiters = repo.getWaiters(lock.project, lock.resource);
+            return {
+              ...formatLock(lock),
+              ...(waiters.length > 0
+                ? { waiting: waiters.map((w) => w.session_id) }
+                : {}),
+            };
+          }),
         };
       },
     },
