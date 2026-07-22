@@ -451,11 +451,12 @@ export class Repository {
     priority?: InboxPriority | null;
     message: string;
     tags?: string[] | null;
+    reply_to?: number | null;
   }): InboxRow {
     this.pruneOldInbox();
     const stmt = this.db.prepare(`
-      INSERT INTO inbox (project, from_session, from_branch, to_session, priority, message, tags, created_at)
-      VALUES (@project, @from_session, @from_branch, @to_session, @priority, @message, @tags, @created_at)
+      INSERT INTO inbox (project, from_session, from_branch, to_session, priority, message, tags, created_at, reply_to)
+      VALUES (@project, @from_session, @from_branch, @to_session, @priority, @message, @tags, @created_at, @reply_to)
     `);
     const result = stmt.run({
       project: input.project,
@@ -466,10 +467,17 @@ export class Repository {
       message: input.message,
       tags: input.tags ? JSON.stringify(input.tags) : null,
       created_at: this.now(),
+      reply_to: input.reply_to ?? null,
     });
     return this.db
       .prepare("SELECT * FROM inbox WHERE id = ?")
       .get(result.lastInsertRowid) as InboxRow;
+  }
+
+  getInboxMessage(id: number): InboxRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM inbox WHERE id = ?")
+      .get(id) as InboxRow | undefined;
   }
 
   readInbox(input: {

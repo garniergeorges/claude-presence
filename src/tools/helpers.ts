@@ -55,6 +55,7 @@ export function formatInbox(row: InboxRow) {
     message: row.message,
     tags: row.tags ? safeParse(row.tags) : null,
     created_at: isoOrNull(row.created_at),
+    reply_to: row.reply_to,
   };
 }
 

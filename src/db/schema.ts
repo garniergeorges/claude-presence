@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS inbox (
   priority TEXT NOT NULL DEFAULT 'info' CHECK (priority IN ('info', 'warning', 'urgent')),
   message TEXT NOT NULL,
   tags TEXT,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  reply_to INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_inbox_project ON inbox(project, created_at DESC);
@@ -93,6 +94,22 @@ CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_token ON audit_log(token_id);
 `;
 
-export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-export const LOCK_DEFAULT_TTL_MS = 10 * 60 * 1000;
-export const INBOX_RETENTION_MS = 24 * 60 * 60 * 1000;
+function envSecondsToMs(name: string, defaultMs: number): number {
+  const raw = process.env[name];
+  if (!raw) return defaultMs;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n * 1000 : defaultMs;
+}
+
+export const SESSION_TTL_MS = envSecondsToMs(
+  "CLAUDE_PRESENCE_SESSION_TTL_SECONDS",
+  24 * 60 * 60 * 1000,
+);
+export const LOCK_DEFAULT_TTL_MS = envSecondsToMs(
+  "CLAUDE_PRESENCE_LOCK_TTL_SECONDS",
+  10 * 60 * 1000,
+);
+export const INBOX_RETENTION_MS = envSecondsToMs(
+  "CLAUDE_PRESENCE_INBOX_RETENTION_SECONDS",
+  24 * 60 * 60 * 1000,
+);
