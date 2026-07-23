@@ -26,6 +26,7 @@ export interface ResourceLockRow {
   acquired_at: number;
   expires_at: number;
   ttl_seconds: number | null;
+  capacity: number;
 }
 
 export interface LockWaiterRow {
@@ -80,6 +81,37 @@ function migrateLocks(db: Database.Database): void {
   if (!has("ttl_seconds")) {
     db.exec("ALTER TABLE resource_locks ADD COLUMN ttl_seconds INTEGER");
   }
+  // Counted locks changed the primary key from (project, resource) to
+  // (project, resource, session_id), which SQLite cannot ALTER in place.
+  // The capacity column doubles as the migration marker. Rows whose session
+  // vanished are dropped to satisfy the FK; they were unreachable anyway.
+  if (!has("capacity")) {
+    db.exec(`
+      CREATE TABLE resource_locks_new (
+        resource TEXT NOT NULL,
+        project TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        branch TEXT,
+        reason TEXT,
+        acquired_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        ttl_seconds INTEGER,
+        capacity INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (project, resource, session_id),
+        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+      INSERT INTO resource_locks_new (resource, project, session_id, branch, reason, acquired_at, expires_at, ttl_seconds, capacity)
+        SELECT l.resource, l.project, l.session_id, l.branch, l.reason, l.acquired_at, l.expires_at, l.ttl_seconds, 1
+        FROM resource_locks l
+        JOIN sessions s ON s.id = l.session_id;
+      DROP TABLE resource_locks;
+      ALTER TABLE resource_locks_new RENAME TO resource_locks;
+    `);
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_locks_expires ON resource_locks(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_locks_session ON resource_locks(session_id);
+  `);
 }
 
 function migrateSessions(db: Database.Database): void {

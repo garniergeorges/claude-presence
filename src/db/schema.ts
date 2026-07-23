@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS resource_locks (
   acquired_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   ttl_seconds INTEGER,
-  PRIMARY KEY (project, resource),
+  capacity INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (project, resource, session_id),
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 

@@ -310,6 +310,130 @@ describe("Repository — lock waiting queue", () => {
   });
 });
 
+describe("Repository — counted locks (semaphores)", () => {
+  let repo: Repository;
+  let db: Database.Database;
+
+  beforeEach(() => {
+    ({ repo, db } = freshRepo());
+    for (const id of ["sess-A", "sess-B", "sess-C", "sess-D"]) {
+      repo.registerSession({ id, project: "/repo" });
+    }
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.useRealTimers();
+  });
+
+  const claim = (session_id: string, extra?: Record<string, unknown>) =>
+    repo.claimResource({
+      resource: "cpu-heavy",
+      project: "/repo",
+      session_id,
+      ...extra,
+    });
+
+  const unreadFor = (session_id: string) =>
+    repo.readInbox({ project: "/repo", session_id, unread_only: true }).messages;
+
+  it("capacity=2 grants two concurrent holders and refuses the third", () => {
+    expect(claim("sess-A", { capacity: 2 }).ok).toBe(true);
+    expect(claim("sess-B").ok).toBe(true);
+    const c = claim("sess-C");
+    expect(c.ok).toBe(false);
+    expect(c.capacity).toBe(2);
+    expect(c.holders?.map((h) => h.session_id)).toEqual(["sess-A", "sess-B"]);
+  });
+
+  it("joiners inherit the effective capacity set by the first holder", () => {
+    claim("sess-A", { capacity: 2 });
+    const b = claim("sess-B", { capacity: 5 });
+    expect(b.ok).toBe(true);
+    expect(b.capacity).toBe(2);
+    expect(claim("sess-C", { capacity: 5 }).ok).toBe(false);
+  });
+
+  it("capacity can change once every slot is released", () => {
+    claim("sess-A", { capacity: 2 });
+    claim("sess-B");
+    repo.releaseResource({ resource: "cpu-heavy", project: "/repo", session_id: "sess-A" });
+    repo.releaseResource({ resource: "cpu-heavy", project: "/repo", session_id: "sess-B" });
+    const d = claim("sess-D", { capacity: 3 });
+    expect(d.ok).toBe(true);
+    expect(d.capacity).toBe(3);
+  });
+
+  it("re-claim by a holder renews its slot without consuming another", () => {
+    claim("sess-A", { capacity: 2 });
+    claim("sess-B");
+    const renewed = claim("sess-A", { ttl_seconds: 900 });
+    expect(renewed.ok).toBe(true);
+    expect(repo.listLocks("/repo")).toHaveLength(2);
+  });
+
+  it("releasing one slot notifies the first waiter while the other holder remains", () => {
+    claim("sess-A", { capacity: 2 });
+    claim("sess-B");
+    claim("sess-C", { wait: true });
+    const released = repo.releaseResource({
+      resource: "cpu-heavy",
+      project: "/repo",
+      session_id: "sess-B",
+    });
+    expect(released).toEqual({ released: true, notified_waiter: "sess-C" });
+    expect(repo.listLocks("/repo").map((l) => l.session_id)).toEqual(["sess-A"]);
+    expect(unreadFor("sess-C")).toHaveLength(1);
+  });
+
+  it("force release clears every slot and notifies one waiter per freed slot", () => {
+    claim("sess-A", { capacity: 2 });
+    claim("sess-B");
+    claim("sess-C", { wait: true });
+    claim("sess-D", { wait: true });
+    const released = repo.releaseResource({
+      resource: "cpu-heavy",
+      project: "/repo",
+      session_id: "outsider",
+      force: true,
+    });
+    expect(released).toEqual({
+      released: true,
+      notified_waiter: "sess-C",
+      notified_waiters: ["sess-C", "sess-D"],
+    });
+    expect(repo.listLocks("/repo")).toHaveLength(0);
+    expect(unreadFor("sess-C")).toHaveLength(1);
+    expect(unreadFor("sess-D")).toHaveLength(1);
+  });
+
+  it("per-slot expiry frees one slot and notifies one waiter", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    claim("sess-A", { capacity: 2, ttl_seconds: 5 });
+    claim("sess-B", { ttl_seconds: 600 });
+    claim("sess-C", { wait: true });
+
+    vi.setSystemTime(new Date(Date.now() + 10_000));
+    repo.listLocks("/repo");
+
+    expect(unreadFor("sess-C")).toHaveLength(1);
+    expect(repo.listLocks("/repo").map((l) => l.session_id)).toEqual(["sess-B"]);
+  });
+
+  it("a slot freed by expiry keeps the inherited capacity for the next claim", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    claim("sess-A", { capacity: 2, ttl_seconds: 5 });
+    claim("sess-B", { ttl_seconds: 600 });
+
+    vi.setSystemTime(new Date(Date.now() + 10_000));
+    const c = claim("sess-C", { capacity: 9 });
+    expect(c.ok).toBe(true);
+    expect(c.capacity).toBe(2);
+  });
+});
+
 describe("Repository — lock renewal via heartbeat", () => {
   let repo: Repository;
   let db: Database.Database;

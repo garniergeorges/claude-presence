@@ -299,8 +299,8 @@ Claude Code runs every command in the array in order. Both tools get their turn.
 | `session_heartbeat` | Keep this session alive (optionally renew held locks with `renew_locks: true`) |
 | `session_unregister` | Clean exit |
 | `session_list` | List active sessions on the same project |
-| `resource_claim` | Acquire advisory lock on a named resource (`wait: true` joins the waiting queue) |
-| `resource_release` | Release a lock (the first waiter gets an inbox notification) |
+| `resource_claim` | Acquire advisory lock on a named resource (`wait: true` joins the waiting queue, `capacity: N` makes it a counted lock allowing N concurrent holders) |
+| `resource_release` | Release a lock slot (one waiter gets an inbox notification per freed slot) |
 | `resource_list` | List active locks |
 | `broadcast` | Post a message to the project inbox |
 | `read_inbox` | Read recent messages |
