@@ -39,6 +39,8 @@ export interface ClaimResult {
   ok: boolean;
   lock?: ResourceLockRow;
   held_by?: ResourceLockRow;
+  holders?: ResourceLockRow[];
+  capacity?: number;
   session_recreated?: boolean;
   queued?: boolean;
   queue_position?: number;
@@ -56,6 +58,7 @@ export interface ReleaseResult {
   released: boolean;
   reason?: string;
   notified_waiter?: string;
+  notified_waiters?: string[];
 }
 
 export class Repository {
@@ -89,9 +92,9 @@ export class Repository {
         skipWaiter.resource === lock.resource
           ? skipWaiter.session_id
           : undefined;
-      this.notifyNextWaiter(lock.project, lock.resource, {
+      this.notifyWaiters(lock.project, lock.resource, {
         from_session: lock.session_id,
-        message: `Lock on '${lock.resource}' held by '${lock.session_id}' expired and the resource is now free. You were first in the waiting queue: claim it with resource_claim.`,
+        message: `Lock on '${lock.resource}' held by '${lock.session_id}' expired and a slot is now free. You were next in the waiting queue: claim it with resource_claim.`,
         skip_session: skip,
       });
     }
@@ -101,35 +104,48 @@ export class Repository {
     return stmt.run(now).changes;
   }
 
-  private notifyNextWaiter(
+  private notifyWaiters(
     project: string,
     resource: string,
-    opts: { from_session: string; message: string; skip_session?: string },
-  ): string | undefined {
-    const next = this.db
-      .prepare(
-        "SELECT * FROM lock_waiters WHERE project = ? AND resource = ? ORDER BY rowid ASC LIMIT 1",
-      )
-      .get(project, resource) as LockWaiterRow | undefined;
-    if (!next) return undefined;
+    opts: {
+      from_session: string;
+      message: string;
+      skip_session?: string;
+      count?: number;
+    },
+  ): string[] {
+    const notified: string[] = [];
+    // A skipped waiter (the session currently claiming) consumes its freed
+    // slot immediately, so it counts against the budget without a broadcast.
+    let remaining = opts.count ?? 1;
+    while (remaining > 0) {
+      const next = this.db
+        .prepare(
+          "SELECT * FROM lock_waiters WHERE project = ? AND resource = ? ORDER BY rowid ASC LIMIT 1",
+        )
+        .get(project, resource) as LockWaiterRow | undefined;
+      if (!next) break;
 
-    this.db
-      .prepare(
-        "DELETE FROM lock_waiters WHERE project = ? AND resource = ? AND session_id = ?",
-      )
-      .run(project, resource, next.session_id);
+      this.db
+        .prepare(
+          "DELETE FROM lock_waiters WHERE project = ? AND resource = ? AND session_id = ?",
+        )
+        .run(project, resource, next.session_id);
+      remaining--;
 
-    if (next.session_id === opts.skip_session) return undefined;
+      if (next.session_id === opts.skip_session) continue;
 
-    this.broadcast({
-      project,
-      from_session: opts.from_session,
-      to_session: next.session_id,
-      priority: "warning",
-      message: opts.message,
-      tags: ["lock-queue", resource],
-    });
-    return next.session_id;
+      this.broadcast({
+        project,
+        from_session: opts.from_session,
+        to_session: next.session_id,
+        priority: "warning",
+        message: opts.message,
+        tags: ["lock-queue", resource],
+      });
+      notified.push(next.session_id);
+    }
+    return notified;
   }
 
   getWaiters(project: string, resource: string): LockWaiterRow[] {
@@ -297,6 +313,7 @@ export class Repository {
     reason?: string | null;
     ttl_seconds?: number;
     wait?: boolean;
+    capacity?: number;
   }): ClaimResult {
     this.pruneExpiredLocks({
       project: input.project,
@@ -317,13 +334,40 @@ export class Repository {
       sessionRecreated = true;
     }
 
-    const existing = this.db
-      .prepare(
-        "SELECT * FROM resource_locks WHERE project = ? AND resource = ?",
-      )
-      .get(input.project, input.resource) as ResourceLockRow | undefined;
+    const holders = this.getHolders(input.project, input.resource);
+    const mine = holders.find((h) => h.session_id === input.session_id);
 
-    if (existing && existing.session_id !== input.session_id) {
+    if (mine) {
+      this.db
+        .prepare(
+          `UPDATE resource_locks SET branch = ?, reason = ?, expires_at = ?, ttl_seconds = ?
+           WHERE project = ? AND resource = ? AND session_id = ?`,
+        )
+        .run(
+          input.branch ?? null,
+          input.reason ?? null,
+          expires_at,
+          ttlSeconds,
+          input.project,
+          input.resource,
+          input.session_id,
+        );
+      return {
+        ok: true,
+        lock: { ...mine, branch: input.branch ?? null, reason: input.reason ?? null, expires_at, ttl_seconds: ttlSeconds },
+        capacity: mine.capacity,
+        session_recreated: sessionRecreated || undefined,
+      };
+    }
+
+    // The capacity in effect is set when the resource goes from free to held;
+    // joiners inherit it and cannot change it until every slot is released.
+    const capacity =
+      holders.length > 0
+        ? holders[0].capacity
+        : Math.max(1, Math.floor(input.capacity ?? 1));
+
+    if (holders.length >= capacity) {
       let queued: boolean | undefined;
       let queue_position: number | undefined;
       if (input.wait) {
@@ -350,34 +394,31 @@ export class Repository {
       }
       return {
         ok: false,
-        held_by: existing,
+        held_by: holders[0],
+        holders,
+        capacity,
         session_recreated: sessionRecreated || undefined,
         queued,
         queue_position,
       };
     }
 
-    const stmt = this.db.prepare(`
-      INSERT INTO resource_locks (resource, project, session_id, branch, reason, acquired_at, expires_at, ttl_seconds)
-      VALUES (@resource, @project, @session_id, @branch, @reason, @acquired_at, @expires_at, @ttl_seconds)
-      ON CONFLICT(project, resource) DO UPDATE SET
-        session_id = excluded.session_id,
-        branch = excluded.branch,
-        reason = excluded.reason,
-        acquired_at = excluded.acquired_at,
-        expires_at = excluded.expires_at,
-        ttl_seconds = excluded.ttl_seconds
-    `);
-    stmt.run({
-      resource: input.resource,
-      project: input.project,
-      session_id: input.session_id,
-      branch: input.branch ?? null,
-      reason: input.reason ?? null,
-      acquired_at: existing ? existing.acquired_at : now,
-      expires_at,
-      ttl_seconds: ttlSeconds,
-    });
+    this.db
+      .prepare(
+        `INSERT INTO resource_locks (resource, project, session_id, branch, reason, acquired_at, expires_at, ttl_seconds, capacity)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.resource,
+        input.project,
+        input.session_id,
+        input.branch ?? null,
+        input.reason ?? null,
+        now,
+        expires_at,
+        ttlSeconds,
+        capacity,
+      );
 
     this.db
       .prepare(
@@ -387,15 +428,24 @@ export class Repository {
 
     const lock = this.db
       .prepare(
-        "SELECT * FROM resource_locks WHERE project = ? AND resource = ?",
+        "SELECT * FROM resource_locks WHERE project = ? AND resource = ? AND session_id = ?",
       )
-      .get(input.project, input.resource) as ResourceLockRow;
+      .get(input.project, input.resource, input.session_id) as ResourceLockRow;
 
     return {
       ok: true,
       lock,
+      capacity,
       session_recreated: sessionRecreated || undefined,
     };
+  }
+
+  private getHolders(project: string, resource: string): ResourceLockRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM resource_locks WHERE project = ? AND resource = ? ORDER BY acquired_at ASC, rowid ASC",
+      )
+      .all(project, resource) as ResourceLockRow[];
   }
 
   releaseResource(input: {
@@ -404,29 +454,43 @@ export class Repository {
     session_id: string;
     force?: boolean;
   }): ReleaseResult {
-    const existing = this.db
-      .prepare(
-        "SELECT * FROM resource_locks WHERE project = ? AND resource = ?",
-      )
-      .get(input.project, input.resource) as ResourceLockRow | undefined;
+    const holders = this.getHolders(input.project, input.resource);
 
-    if (!existing) return { released: false, reason: "not_held" };
-    if (existing.session_id !== input.session_id && !input.force) {
+    if (holders.length === 0) return { released: false, reason: "not_held" };
+    const mine = holders.find((h) => h.session_id === input.session_id);
+    if (!mine && !input.force) {
       return { released: false, reason: "not_owner" };
     }
 
-    this.db
-      .prepare(
-        "DELETE FROM resource_locks WHERE project = ? AND resource = ?",
-      )
-      .run(input.project, input.resource);
+    let freed: number;
+    if (mine) {
+      this.db
+        .prepare(
+          "DELETE FROM resource_locks WHERE project = ? AND resource = ? AND session_id = ?",
+        )
+        .run(input.project, input.resource, input.session_id);
+      freed = 1;
+    } else {
+      this.db
+        .prepare(
+          "DELETE FROM resource_locks WHERE project = ? AND resource = ?",
+        )
+        .run(input.project, input.resource);
+      freed = holders.length;
+    }
 
-    const notified = this.notifyNextWaiter(input.project, input.resource, {
+    const notified = this.notifyWaiters(input.project, input.resource, {
       from_session: input.session_id,
-      message: `Resource '${input.resource}' was just released and is now available. You were first in the waiting queue: claim it with resource_claim.`,
+      message: `Resource '${input.resource}' was just released and a slot is now available. You were next in the waiting queue: claim it with resource_claim.`,
       skip_session: input.session_id,
+      count: freed,
     });
-    return notified ? { released: true, notified_waiter: notified } : { released: true };
+    if (notified.length === 0) return { released: true };
+    return {
+      released: true,
+      notified_waiter: notified[0],
+      ...(notified.length > 1 ? { notified_waiters: notified } : {}),
+    };
   }
 
   listLocks(project?: string): ResourceLockRow[] {

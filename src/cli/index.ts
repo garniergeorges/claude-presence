@@ -160,7 +160,7 @@ function printLocks(repo: Repository, project: string | undefined, json: boolean
   console.log(`${locks.length} active lock(s):\n`);
   for (const l of locks) {
     const remaining = Math.max(0, Math.round((l.expires_at - Date.now()) / 1000));
-    console.log(`  • ${l.resource}  (project: ${l.project})`);
+    console.log(`  • ${l.resource}  (project: ${l.project})${l.capacity > 1 ? `  [capacity ${l.capacity}]` : ""}`);
     console.log(`    held by : ${l.session_id}${l.branch ? `  on ${l.branch}` : ""}`);
     if (l.reason) console.log(`    reason  : ${l.reason}`);
     console.log(`    since   : ${formatRelative(l.acquired_at)}`);

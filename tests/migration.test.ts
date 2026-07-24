@@ -147,6 +147,43 @@ describe("openDatabase migration — upgrades v0.2.1 schema in place", () => {
     db.close();
   });
 
+  it("rebuilds resource_locks with capacity and preserves the legacy lock", () => {
+    const db = openDatabase(dbPath);
+    const repo = new Repository(db);
+    const locks = repo.listLocks("/repo");
+    expect(locks).toHaveLength(1);
+    expect(locks[0].session_id).toBe("alice");
+    expect(locks[0].resource).toBe("ci");
+    expect(locks[0].capacity).toBe(1);
+    db.close();
+  });
+
+  it("allows multiple holders on one resource after the primary key rebuild", () => {
+    const db = openDatabase(dbPath);
+    const repo = new Repository(db);
+    repo.registerSession({ id: "bob", project: "/repo" });
+    repo.registerSession({ id: "carol", project: "/repo" });
+    expect(
+      repo.claimResource({ resource: "build", project: "/repo", session_id: "bob", capacity: 2 }).ok,
+    ).toBe(true);
+    expect(
+      repo.claimResource({ resource: "build", project: "/repo", session_id: "carol" }).ok,
+    ).toBe(true);
+    expect(repo.listLocks("/repo").filter((l) => l.resource === "build")).toHaveLength(2);
+    db.close();
+  });
+
+  it("recreates the lock indexes after the resource_locks rebuild", () => {
+    const db = openDatabase(dbPath);
+    const indexes = db
+      .prepare("PRAGMA index_list(resource_locks)")
+      .all() as Array<{ name: string }>;
+    const names = indexes.map((i) => i.name);
+    expect(names).toContain("idx_locks_expires");
+    expect(names).toContain("idx_locks_session");
+    db.close();
+  });
+
   it("creates the lock_waiters table", () => {
     const db = openDatabase(dbPath);
     const tables = db

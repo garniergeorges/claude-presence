@@ -7,7 +7,7 @@ export function lockTools(repo: Repository): McpTool[] {
     {
       name: "resource_claim",
       description:
-        "Try to acquire an advisory lock on a named shared resource. Use before touching anything that other sessions might also touch: CI ('ci'), deployments ('deploy:staging'), ports ('port:3000'), shared DBs ('db:staging'), etc. The lock is advisory — other sessions can still act, but they'll see your claim. If another session already holds it, returns ok=false with the holder info so you can decide to wait or coordinate.",
+        "Try to acquire an advisory lock on a named shared resource. Use before touching anything that other sessions might also touch: CI ('ci'), deployments ('deploy:staging'), ports ('port:3000'), shared DBs ('db:staging'), etc. The lock is advisory — other sessions can still act, but they'll see your claim. With capacity > 1 the resource behaves as a counted lock (semaphore): up to that many sessions hold a slot concurrently, e.g. throttling CPU-heavy jobs ('cpu-heavy'). If the resource is at capacity, returns ok=false with the holder info so you can decide to wait or coordinate.",
       inputShape: {
         session_id: z.string().min(1),
         project: z.string().min(1),
@@ -33,7 +33,16 @@ export function lockTools(repo: Repository): McpTool[] {
           .boolean()
           .optional()
           .describe(
-            "If the resource is already claimed, join the waiting queue. The first waiter receives an inbox notification (surfaced at the next prompt) when the lock is released or expires.",
+            "If the resource is already claimed, join the waiting queue. One waiter is notified via inbox (surfaced at the next prompt) per freed slot when a lock is released or expires.",
+          ),
+        capacity: z
+          .number()
+          .int()
+          .min(1)
+          .max(64)
+          .optional()
+          .describe(
+            "Semaphore capacity: max concurrent holders for this resource. Only takes effect when the resource is currently free; while held, the capacity set by the first holder applies (release every slot to change it). Default 1 (exclusive lock).",
           ),
       },
       handler: async (args) => {
@@ -45,17 +54,25 @@ export function lockTools(repo: Repository): McpTool[] {
           reason: args.reason ?? null,
           ttl_seconds: args.ttl_seconds,
           wait: args.wait,
+          capacity: args.capacity,
         });
 
         if (!result.ok && result.held_by) {
           const holder = result.held_by;
           const heldBySession = repo.getSession(holder.session_id);
+          const cap = result.capacity ?? 1;
+          const atCapacity =
+            cap > 1
+              ? `Resource '${args.resource}' is at capacity (${result.holders!.length}/${cap} slots in use).`
+              : `Resource '${args.resource}' is already claimed by another session.`;
           return {
             ok: false,
             message: result.queued
-              ? `Resource '${args.resource}' is already claimed by another session. You are #${result.queue_position} in the waiting queue and will get an inbox notification when it frees up.`
-              : `Resource '${args.resource}' is already claimed by another session. Consider retrying with wait=true to join the queue, coordinating via broadcast, or asking the user before proceeding.`,
+              ? `${atCapacity} You are #${result.queue_position} in the waiting queue and will get an inbox notification when a slot frees up.`
+              : `${atCapacity} Consider retrying with wait=true to join the queue, coordinating via broadcast, or asking the user before proceeding.`,
             held_by: formatLock(holder),
+            ...(cap > 1 ? { holders: result.holders!.map(formatLock) } : {}),
+            capacity: cap,
             holder_session: heldBySession
               ? {
                   id: heldBySession.id,
@@ -72,12 +89,18 @@ export function lockTools(repo: Repository): McpTool[] {
           };
         }
 
+        const cap = result.capacity ?? 1;
+        const acquired =
+          cap > 1
+            ? `Slot acquired on '${args.resource}' (capacity ${cap}).`
+            : `Lock acquired on '${args.resource}'.`;
         return {
           ok: true,
           message: result.session_recreated
-            ? `Lock acquired on '${args.resource}'. Note: your session had been pruned (TTL expired) and was silently re-registered — consider keeping a regular session_heartbeat.`
-            : `Lock acquired on '${args.resource}'. Remember to resource_release when done.`,
+            ? `${acquired} Note: your session had been pruned (TTL expired) and was silently re-registered — consider keeping a regular session_heartbeat.`
+            : `${acquired} Remember to resource_release when done.`,
           lock: formatLock(result.lock!),
+          capacity: cap,
           ...(result.session_recreated ? { session_recreated: true } : {}),
         };
       },
@@ -94,7 +117,7 @@ export function lockTools(repo: Repository): McpTool[] {
           .boolean()
           .optional()
           .describe(
-            "Force-release even if you're not the holder. Use only if you're cleaning up after a dead session.",
+            "Force-release even if you're not a holder: clears every slot of the resource. Use only if you're cleaning up after dead sessions.",
           ),
       },
       handler: async (args) => {
@@ -105,9 +128,10 @@ export function lockTools(repo: Repository): McpTool[] {
           force: args.force,
         });
         if (result.released && result.notified_waiter) {
+          const who = result.notified_waiters ?? [result.notified_waiter];
           return {
             ...result,
-            message: `Waiting session '${result.notified_waiter}' was notified that the resource is free.`,
+            message: `Waiting session(s) ${who.map((w) => `'${w}'`).join(", ")} notified that a slot is free.`,
           };
         }
         return result;

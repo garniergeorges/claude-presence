@@ -41,6 +41,7 @@ export function formatLock(row: ResourceLockRow) {
       0,
       Math.round((row.expires_at - Date.now()) / 1000),
     ),
+    ...(row.capacity > 1 ? { capacity: row.capacity } : {}),
   };
 }
 
