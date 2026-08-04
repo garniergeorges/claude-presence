@@ -68,6 +68,7 @@ export function createMcpHttpHandler(options: McpHttpHandlerOptions) {
             toolOverrides: entry.currentAuth.toolOverrides,
           },
           tokenId: entry.currentAuth.token.id,
+          tokenName: entry.currentAuth.token.name,
           ipAddress: entry.currentAuth.ipAddress,
           audit: options.audit!,
         };

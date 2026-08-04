@@ -1,11 +1,22 @@
 import type { z, ZodRawShape } from "zod";
 import type { InboxRow, ResourceLockRow, SessionRow } from "../db/index.js";
 
+/**
+ * Per-call metadata injected by the transport layer, derived from the auth
+ * token — never from client-supplied arguments. Absent in no-auth mode.
+ */
+export interface ToolCallMeta {
+  identity: string | null;
+}
+
 export interface McpTool<TShape extends ZodRawShape = ZodRawShape> {
   name: string;
   description: string;
   inputShape: TShape;
-  handler: (args: z.objectOutputType<TShape, z.ZodTypeAny>) => Promise<unknown>;
+  handler: (
+    args: z.objectOutputType<TShape, z.ZodTypeAny>,
+    meta?: ToolCallMeta,
+  ) => Promise<unknown>;
 }
 
 function isoOrNull(ms: number | null | undefined): string | null {
@@ -13,7 +24,20 @@ function isoOrNull(ms: number | null | undefined): string | null {
   return new Date(ms).toISOString();
 }
 
+/** Server-computed liveness so "online" stops being client folklore. */
+export type SessionStatus = "active" | "idle" | "stale";
+const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
+const IDLE_WINDOW_MS = 30 * 60 * 1000;
+
+export function sessionStatus(lastHeartbeatMs: number, nowMs = Date.now()): SessionStatus {
+  const age = nowMs - lastHeartbeatMs;
+  if (age <= ACTIVE_WINDOW_MS) return "active";
+  if (age <= IDLE_WINDOW_MS) return "idle";
+  return "stale";
+}
+
 export function formatSession(row: SessionRow) {
+  const now = Date.now();
   return {
     id: row.id,
     project: row.project,
@@ -21,9 +45,12 @@ export function formatSession(row: SessionRow) {
     intent: row.intent,
     pid: row.pid,
     hostname: row.hostname,
+    identity: row.identity,
     started_at: isoOrNull(row.started_at),
     last_heartbeat: isoOrNull(row.last_heartbeat),
-    age_seconds: Math.round((Date.now() - row.started_at) / 1000),
+    status: sessionStatus(row.last_heartbeat, now),
+    last_heartbeat_age_seconds: Math.round((now - row.last_heartbeat) / 1000),
+    age_seconds: Math.round((now - row.started_at) / 1000),
     metadata: row.metadata ? safeParse(row.metadata) : null,
   };
 }
@@ -50,10 +77,15 @@ export function formatInbox(row: InboxRow) {
     project: row.project,
     from_session: row.from_session,
     from_branch: row.from_branch,
+    from_identity: row.from_identity,
     to_session: row.to_session,
     priority: row.priority,
     message: row.message,
     tags: row.tags ? safeParse(row.tags) : null,
+    act: row.act,
+    cid: row.cid,
+    fim: row.fim === null || row.fim === undefined ? null : row.fim === 1,
+    rt: row.rt,
     created_at: isoOrNull(row.created_at),
   };
 }

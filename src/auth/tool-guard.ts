@@ -9,6 +9,8 @@ import type { AuditLogger } from "./audit.js";
 export interface GuardedToolContext {
   permissions: TokenPermissions;
   tokenId: string | null;
+  /** The auth token's name — stamped onto messages/sessions as identity. */
+  tokenName: string | null;
   ipAddress: string | null;
   audit: AuditLogger;
 }
@@ -40,7 +42,7 @@ export function registerGuardedTools(
 
         // Stateless mode (no auth context) — fall through, used by tests
         if (!ctx) {
-          return invokeTool(tool, args, () => undefined);
+          return invokeTool(tool, args, undefined, () => undefined);
         }
 
         if (!canCallTool(ctx.permissions, tool.name)) {
@@ -104,16 +106,21 @@ export function registerGuardedTools(
           };
         }
 
-        return invokeTool(tool, args, (status) => {
-          ctx.audit.log({
-            tokenId: ctx.tokenId,
-            toolName: tool.name,
-            args,
-            status,
-            ipAddress: ctx.ipAddress,
-            durationMs: Date.now() - start,
-          });
-        });
+        return invokeTool(
+          tool,
+          args,
+          { identity: ctx.tokenName },
+          (status) => {
+            ctx.audit.log({
+              tokenId: ctx.tokenId,
+              toolName: tool.name,
+              args,
+              status,
+              ipAddress: ctx.ipAddress,
+              durationMs: Date.now() - start,
+            });
+          },
+        );
       },
     );
   }
@@ -124,10 +131,11 @@ export function registerGuardedTools(
 async function invokeTool(
   tool: McpTool,
   args: unknown,
+  meta: { identity: string | null } | undefined,
   reportStatus: (status: "ok" | "error") => void,
 ): Promise<CallToolResult> {
   try {
-    const result = await tool.handler(args as never);
+    const result = await tool.handler(args as never, meta);
     reportStatus("ok");
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

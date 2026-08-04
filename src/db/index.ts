@@ -15,6 +15,8 @@ export interface SessionRow {
   last_heartbeat: number;
   metadata: string | null;
   client_session_id: string | null;
+  /** Server-stamped: the auth token's name. Clients cannot forge it. */
+  identity: string | null;
 }
 
 export interface ResourceLockRow {
@@ -39,6 +41,21 @@ export interface InboxRow {
   message: string;
   tags: string | null;
   created_at: number;
+  /** Server-stamped: the auth token's name. Clients cannot forge it. */
+  from_identity: string | null;
+  /** Structured C2C envelope fields — optional, promoted out of the message body. */
+  act: string | null;
+  cid: string | null;
+  fim: number | null;
+  rt: string | null;
+}
+
+export interface ClosedProjectRow {
+  project: string;
+  closed_by: string;
+  closed_identity: string | null;
+  reason: string | null;
+  closed_at: number;
 }
 
 export function getDefaultDbPath(): string {
@@ -70,6 +87,9 @@ function migrateSessions(db: Database.Database): void {
   if (!has("client_session_id")) {
     db.exec("ALTER TABLE sessions ADD COLUMN client_session_id TEXT");
   }
+  if (!has("identity")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN identity TEXT");
+  }
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_sessions_client_id ON sessions(client_session_id)",
   );
@@ -93,4 +113,16 @@ function migrateInbox(db: Database.Database): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_inbox_to_session ON inbox(to_session)",
   );
+  // v0.5.0 additive columns: server-stamped identity + structured C2C envelope.
+  if (!has("from_identity")) {
+    db.exec("ALTER TABLE inbox ADD COLUMN from_identity TEXT");
+  }
+  for (const col of ["act", "cid", "rt"]) {
+    if (!has(col)) db.exec(`ALTER TABLE inbox ADD COLUMN ${col} TEXT`);
+  }
+  if (!has("fim")) {
+    db.exec("ALTER TABLE inbox ADD COLUMN fim INTEGER");
+  }
+  // Cursor reads (since_id) walk ascending ids within a project.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_inbox_project_id ON inbox(project, id)");
 }

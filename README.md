@@ -298,12 +298,25 @@ Claude Code runs every command in the array in order. Both tools get their turn.
 | `session_register` | Declare this session (project, branch, intent) |
 | `session_heartbeat` | Keep this session alive |
 | `session_unregister` | Clean exit |
-| `session_list` | List active sessions on the same project |
+| `session_list` | List active sessions on the same project — each row carries a server-computed `status`: `active` (heartbeat ≤2min), `idle` (≤30min), `stale` (older) |
 | `resource_claim` | Acquire advisory lock on a named resource |
 | `resource_release` | Release a lock |
 | `resource_list` | List active locks |
-| `broadcast` | Post a message to the project inbox |
-| `read_inbox` | Read recent messages |
+| `broadcast` | Post a message to the project inbox. Optional structured envelope fields `act`/`cid`/`fim`/`rt` are stored as queryable columns. The server stamps `from_identity` from the auth token — unforgeable from arguments |
+| `read_inbox` | Read recent messages. `since_id` turns it into a cursor read (only id > since_id, ascending) and the response's `max_id` advances the cursor even on silence — pollers survive restarts without losing the dead window. Envelope filters: `act`, `cid`, `fim` (e.g. `fim: false` = still awaiting reply) |
+| `project_close` | Close a room/project: refuses new broadcasts + registrations, drops its sessions and locks; `read_inbox` still drains. Idempotent |
+| `project_reopen` | Undo a `project_close` |
+
+### WebSocket push — `/subscribe`
+
+Polling is optional now. Connect to `WS /subscribe?project=X&session_id=Y[&since_id=N][&token=T]` and each visible broadcast arrives as one JSON text frame the moment it is posted:
+
+```
+{"type":"hello","project":"…","session_id":"…","max_id":42,"replayed":2}
+{"type":"message","message":{ …same shape as read_inbox… }}
+```
+
+Pass `since_id` to replay what arrived while you were disconnected (the dead window) before live frames begin — no gap, no client-side cursor guessing. Auth: `Authorization: Bearer` header, or `?token=` for clients that cannot set headers (e.g. Claude Code's Monitor tool `ws:` source). Visibility rules match `read_inbox` (own posts excluded, DMs only to their target); replay never consumes read-state.
 
 ## CLI
 
@@ -369,7 +382,7 @@ The stdio mode (`claude-presence-mcp`) keeps working unchanged for solo and sing
 `claude-presence` is designed for **cooperating local sessions on a single developer machine**, not for adversarial multi-tenant use. Concretely:
 
 - The SQLite database lives in your home directory and is only reachable by processes running as you.
-- Session IDs and `from_session` fields are **self-declared** — the server doesn't authenticate them. A buggy or malicious local process could register as any ID or post broadcasts claiming to be another session.
+- Session IDs and `from_session` fields are **self-declared** — the server doesn't authenticate them. A buggy or malicious local process could register as any ID or post broadcasts claiming to be another session. Mitigation since v0.5.0: in authenticated (HTTP) mode the server stamps `from_identity` on every message and session from the auth token's name — that field cannot be forged from arguments, so peers should trust `from_identity` over `from_session` or any identity claimed inside the message body.
 - Resource locks are **advisory**, not enforced. A session can ignore a held lock and push anyway. The value comes from every session agreeing to check first.
 
 This is fine for the intended use case (your own parallel Claude Code sessions cooperating) and explicitly not fine for running untrusted code on the same box. If you need cryptographic identity or server-side enforcement, this isn't the right tool.

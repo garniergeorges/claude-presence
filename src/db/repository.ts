@@ -5,6 +5,7 @@ import {
   SESSION_TTL_MS,
 } from "./schema.js";
 import type {
+  ClosedProjectRow,
   InboxPriority,
   InboxRow,
   ResourceLockRow,
@@ -20,6 +21,17 @@ export interface RegisterSessionInput {
   hostname?: string | null;
   metadata?: Record<string, unknown> | null;
   client_session_id?: string | null;
+  /** Server-stamped from the auth token — never taken from client args. */
+  identity?: string | null;
+}
+
+export class ProjectClosedError extends Error {
+  constructor(public readonly project: string) {
+    super(
+      `project "${project}" is closed. New broadcasts and registrations are refused; read_inbox still works for draining.`,
+    );
+    this.name = "ProjectClosedError";
+  }
 }
 
 export class ClientSessionConflictError extends Error {
@@ -49,10 +61,21 @@ export interface HeartbeatResult {
 }
 
 export class Repository {
+  /**
+   * Listeners invoked synchronously after each successful broadcast INSERT.
+   * The WS push layer subscribes here; errors in listeners never break the write.
+   */
+  private broadcastListeners = new Set<(row: InboxRow) => void>();
+
   constructor(private readonly db: Database.Database) {}
 
   now(): number {
     return Date.now();
+  }
+
+  onBroadcast(listener: (row: InboxRow) => void): () => void {
+    this.broadcastListeners.add(listener);
+    return () => this.broadcastListeners.delete(listener);
   }
 
   pruneDeadSessions(): number {
@@ -86,6 +109,10 @@ export class Repository {
     const now = this.now();
     const clientId = input.client_session_id ?? null;
 
+    if (this.isProjectClosed(input.project)) {
+      throw new ProjectClosedError(input.project);
+    }
+
     if (clientId) {
       const holder = this.db
         .prepare(
@@ -98,8 +125,8 @@ export class Repository {
     }
 
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, project, branch, intent, pid, hostname, started_at, last_heartbeat, metadata, client_session_id)
-      VALUES (@id, @project, @branch, @intent, @pid, @hostname, @started_at, @last_heartbeat, @metadata, @client_session_id)
+      INSERT INTO sessions (id, project, branch, intent, pid, hostname, started_at, last_heartbeat, metadata, client_session_id, identity)
+      VALUES (@id, @project, @branch, @intent, @pid, @hostname, @started_at, @last_heartbeat, @metadata, @client_session_id, @identity)
       ON CONFLICT(id) DO UPDATE SET
         project = excluded.project,
         branch = excluded.branch,
@@ -108,7 +135,8 @@ export class Repository {
         hostname = excluded.hostname,
         last_heartbeat = excluded.last_heartbeat,
         metadata = excluded.metadata,
-        client_session_id = COALESCE(excluded.client_session_id, sessions.client_session_id)
+        client_session_id = COALESCE(excluded.client_session_id, sessions.client_session_id),
+        identity = COALESCE(excluded.identity, sessions.identity)
     `);
     stmt.run({
       id: input.id,
@@ -121,6 +149,7 @@ export class Repository {
       last_heartbeat: now,
       metadata: input.metadata ? JSON.stringify(input.metadata) : null,
       client_session_id: clientId,
+      identity: input.identity ?? null,
     });
     return this.getSession(input.id)!;
   }
@@ -309,11 +338,20 @@ export class Repository {
     priority?: InboxPriority | null;
     message: string;
     tags?: string[] | null;
+    /** Server-stamped from the auth token — never taken from client args. */
+    from_identity?: string | null;
+    act?: string | null;
+    cid?: string | null;
+    fim?: boolean | null;
+    rt?: string | null;
   }): InboxRow {
     this.pruneOldInbox();
+    if (this.isProjectClosed(input.project)) {
+      throw new ProjectClosedError(input.project);
+    }
     const stmt = this.db.prepare(`
-      INSERT INTO inbox (project, from_session, from_branch, to_session, priority, message, tags, created_at)
-      VALUES (@project, @from_session, @from_branch, @to_session, @priority, @message, @tags, @created_at)
+      INSERT INTO inbox (project, from_session, from_branch, to_session, priority, message, tags, created_at, from_identity, act, cid, fim, rt)
+      VALUES (@project, @from_session, @from_branch, @to_session, @priority, @message, @tags, @created_at, @from_identity, @act, @cid, @fim, @rt)
     `);
     const result = stmt.run({
       project: input.project,
@@ -324,10 +362,23 @@ export class Repository {
       message: input.message,
       tags: input.tags ? JSON.stringify(input.tags) : null,
       created_at: this.now(),
+      from_identity: input.from_identity ?? null,
+      act: input.act ?? null,
+      cid: input.cid ?? null,
+      fim: input.fim === null || input.fim === undefined ? null : input.fim ? 1 : 0,
+      rt: input.rt ?? null,
     });
-    return this.db
+    const row = this.db
       .prepare("SELECT * FROM inbox WHERE id = ?")
       .get(result.lastInsertRowid) as InboxRow;
+    for (const listener of this.broadcastListeners) {
+      try {
+        listener(row);
+      } catch {
+        // push is best-effort; a bad listener never breaks the write
+      }
+    }
+    return row;
   }
 
   readInbox(input: {
@@ -337,21 +388,49 @@ export class Repository {
     limit?: number;
     peek?: boolean;
     min_priority?: InboxPriority;
-  }): { messages: InboxRow[]; unread_total: number; total: number } {
+    /** Cursor: only messages with id > since_id, ascending. Dedup becomes server-authoritative. */
+    since_id?: number;
+    /** Envelope filters (see broadcast act/cid/fim). */
+    act?: string;
+    cid?: string;
+    fim?: boolean;
+  }): { messages: InboxRow[]; unread_total: number; total: number; max_id: number } {
     this.pruneOldInbox();
     const limit = input.limit ?? 50;
+    const cursor = input.since_id !== undefined;
 
     // Visibility: messages addressed to me (to_session = me) OR broadcast (to_session IS NULL).
     // Always exclude my own posts.
     const visibility =
       "i.project = ? AND i.from_session != ? AND (i.to_session IS NULL OR i.to_session = ?)";
-    const visibilityArgs = [
+    const visibilityArgs: unknown[] = [
       input.project,
       input.session_id,
       input.session_id,
-    ] as const;
+    ];
 
-    const priorityFilter = priorityFilterClause(input.min_priority);
+    let extra = priorityFilterClause(input.min_priority);
+    const extraArgs: unknown[] = [];
+    if (cursor) {
+      extra += " AND i.id > ?";
+      extraArgs.push(input.since_id);
+    }
+    if (input.act !== undefined) {
+      extra += " AND i.act = ?";
+      extraArgs.push(input.act);
+    }
+    if (input.cid !== undefined) {
+      extra += " AND i.cid = ?";
+      extraArgs.push(input.cid);
+    }
+    if (input.fim !== undefined) {
+      extra += " AND i.fim = ?";
+      extraArgs.push(input.fim ? 1 : 0);
+    }
+
+    // Cursor reads walk FORWARD (ascending id) so the client never skips a
+    // message; the classic read stays newest-first.
+    const order = cursor ? "i.id ASC" : "i.created_at DESC";
 
     let rows: InboxRow[];
 
@@ -362,23 +441,23 @@ export class Repository {
           SELECT i.* FROM inbox i
           LEFT JOIN inbox_reads r
             ON r.message_id = i.id AND r.session_id = ?
-          WHERE ${visibility} AND r.message_id IS NULL${priorityFilter}
-          ORDER BY i.created_at DESC
+          WHERE ${visibility} AND r.message_id IS NULL${extra}
+          ORDER BY ${order}
           LIMIT ?
         `,
         )
-        .all(input.session_id, ...visibilityArgs, limit) as InboxRow[];
+        .all(input.session_id, ...visibilityArgs, ...extraArgs, limit) as InboxRow[];
     } else {
       rows = this.db
         .prepare(
           `
           SELECT i.* FROM inbox i
-          WHERE ${visibility}${priorityFilter}
-          ORDER BY i.created_at DESC
+          WHERE ${visibility}${extra}
+          ORDER BY ${order}
           LIMIT ?
         `,
         )
-        .all(...visibilityArgs, limit) as InboxRow[];
+        .all(...visibilityArgs, ...extraArgs, limit) as InboxRow[];
     }
 
     const unreadCountRow = this.db
@@ -387,16 +466,22 @@ export class Repository {
         SELECT COUNT(*) AS n FROM inbox i
         LEFT JOIN inbox_reads r
           ON r.message_id = i.id AND r.session_id = ?
-        WHERE ${visibility} AND r.message_id IS NULL${priorityFilter}
+        WHERE ${visibility} AND r.message_id IS NULL${extra}
       `,
       )
-      .get(input.session_id, ...visibilityArgs) as { n: number };
+      .get(input.session_id, ...visibilityArgs, ...extraArgs) as { n: number };
 
     const totalCountRow = this.db
       .prepare(
-        `SELECT COUNT(*) AS n FROM inbox i WHERE ${visibility}${priorityFilter}`,
+        `SELECT COUNT(*) AS n FROM inbox i WHERE ${visibility}${extra}`,
       )
-      .get(...visibilityArgs) as { n: number };
+      .get(...visibilityArgs, ...extraArgs) as { n: number };
+
+    // Highest id currently visible in the project (ignores filters): lets a
+    // cursor client advance past silence — 0 fresh messages still moves the cursor.
+    const maxIdRow = this.db
+      .prepare("SELECT COALESCE(MAX(id), 0) AS n FROM inbox WHERE project = ?")
+      .get(input.project) as { n: number };
 
     if (rows.length > 0 && !input.peek) {
       const markStmt = this.db.prepare(
@@ -413,7 +498,66 @@ export class Repository {
       messages: rows,
       unread_total: unreadCountRow.n,
       total: totalCountRow.n,
+      max_id: maxIdRow.n,
     };
+  }
+
+  // ── Room lifecycle ────────────────────────────────────────────────────────
+
+  isProjectClosed(project: string): boolean {
+    return (
+      this.db
+        .prepare("SELECT 1 FROM closed_projects WHERE project = ?")
+        .get(project) !== undefined
+    );
+  }
+
+  getClosedProject(project: string): ClosedProjectRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM closed_projects WHERE project = ?")
+      .get(project) as ClosedProjectRow | undefined;
+  }
+
+  /**
+   * Close a room: refuse new broadcasts/registrations, drop its (ghost)
+   * sessions and locks. Messages stay readable until the retention prune.
+   * Idempotent; reopen undoes it.
+   */
+  closeProject(input: {
+    project: string;
+    closed_by: string;
+    closed_identity?: string | null;
+    reason?: string | null;
+  }): { closed: boolean; already_closed: boolean; sessions_removed: number } {
+    const existing = this.getClosedProject(input.project);
+    if (existing) {
+      return { closed: true, already_closed: true, sessions_removed: 0 };
+    }
+    const sessionsRemoved = this.db
+      .prepare("DELETE FROM sessions WHERE project = ?")
+      .run(input.project).changes;
+    this.db
+      .prepare("DELETE FROM resource_locks WHERE project = ?")
+      .run(input.project);
+    this.db
+      .prepare(
+        "INSERT INTO closed_projects (project, closed_by, closed_identity, reason, closed_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        input.project,
+        input.closed_by,
+        input.closed_identity ?? null,
+        input.reason ?? null,
+        this.now(),
+      );
+    return { closed: true, already_closed: false, sessions_removed: sessionsRemoved };
+  }
+
+  reopenProject(project: string): { reopened: boolean } {
+    const changes = this.db
+      .prepare("DELETE FROM closed_projects WHERE project = ?")
+      .run(project).changes;
+    return { reopened: changes > 0 };
   }
 }
 

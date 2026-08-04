@@ -4,6 +4,7 @@ import type { Repository } from "../db/repository.js";
 import { presenceTools } from "./presence.js";
 import { lockTools } from "./locks.js";
 import { inboxTools } from "./inbox.js";
+import { roomTools } from "./rooms.js";
 import type { McpTool } from "./helpers.js";
 
 export function allTools(repo: Repository): McpTool[] {
@@ -11,6 +12,7 @@ export function allTools(repo: Repository): McpTool[] {
     ...presenceTools(repo),
     ...lockTools(repo),
     ...inboxTools(repo),
+    ...roomTools(repo),
   ];
 }
 

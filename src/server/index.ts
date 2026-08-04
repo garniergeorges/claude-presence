@@ -7,11 +7,12 @@ import { TokenStore } from "../auth/tokens.js";
 import { AuditLogger } from "../auth/audit.js";
 import { TokenAuthenticator, writeAuthError } from "../auth/middleware.js";
 import { createMcpHttpHandler } from "./transport.js";
+import { createPushGateway } from "./push.js";
 import { handleHealth } from "./health.js";
 import { log } from "./logger.js";
 
 const PACKAGE_NAME = "claude-presence";
-const PACKAGE_VERSION = "0.2.3";
+const PACKAGE_VERSION = "0.5.0";
 
 const DEFAULT_PORT = 3471;
 const DEFAULT_HOST = "127.0.0.1";
@@ -74,6 +75,7 @@ Options:
 Endpoints:
   POST /mcp              MCP JSON-RPC endpoint (Streamable HTTP)
   GET  /healthz          Health check (200 OK + DB status)
+  WS   /subscribe        Push inbox stream (?project=&session_id=[&since_id=][&token=])
 
 Environment:
   CLAUDE_PRESENCE_DB         Override SQLite DB path
@@ -125,6 +127,24 @@ async function main() {
     audit: opts.noAuth ? undefined : audit,
   });
 
+  // WS clients that cannot set headers (Claude Code Monitor tool) pass
+  // ?token= — checked against the same token store as the Bearer header.
+  const pushGateway = createPushGateway({
+    repo,
+    verify: opts.noAuth
+      ? null
+      : (req) => {
+          const header = authenticator.authenticate(req);
+          if (header.ok) return { ok: true };
+          const url = new URL(req.url || "/", "http://localhost");
+          const queryToken = url.searchParams.get("token");
+          if (queryToken && store.findByPlaintext(queryToken)) {
+            return { ok: true };
+          }
+          return { ok: false, error: "unauthorized" };
+        },
+  });
+
   const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url || "/";
 
@@ -151,6 +171,15 @@ async function main() {
     res.end(JSON.stringify({ error: "not_found", path: url }));
   });
 
+  httpServer.on("upgrade", (req, socket, head) => {
+    const url = req.url || "/";
+    if (url === "/subscribe" || url.startsWith("/subscribe?")) {
+      pushGateway.handleUpgrade(req, socket, head);
+      return;
+    }
+    socket.destroy();
+  });
+
   await new Promise<void>((resolve) => {
     httpServer.listen(opts.port, opts.host, resolve);
   });
@@ -167,6 +196,7 @@ async function main() {
 
   const shutdown = async (signal: string) => {
     log.info("shutting down", { signal });
+    pushGateway.close();
     httpServer.close();
     try {
       db.close();

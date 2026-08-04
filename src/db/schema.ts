@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   started_at INTEGER NOT NULL,
   last_heartbeat INTEGER NOT NULL,
   metadata TEXT,
-  client_session_id TEXT
+  client_session_id TEXT,
+  identity TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
@@ -39,10 +40,23 @@ CREATE TABLE IF NOT EXISTS inbox (
   priority TEXT NOT NULL DEFAULT 'info' CHECK (priority IN ('info', 'warning', 'urgent')),
   message TEXT NOT NULL,
   tags TEXT,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  from_identity TEXT,
+  act TEXT,
+  cid TEXT,
+  fim INTEGER,
+  rt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_inbox_project ON inbox(project, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS closed_projects (
+  project TEXT PRIMARY KEY,
+  closed_by TEXT NOT NULL,
+  closed_identity TEXT,
+  reason TEXT,
+  closed_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS inbox_reads (
   session_id TEXT NOT NULL,

@@ -38,7 +38,7 @@ export function presenceTools(repo: Repository): McpTool[] {
             "Opaque client identifier (e.g. Claude Code's internal session UUID from ${CLAUDE_SESSION_ID}). Lets hooks resolve 'me' from stdin without knowing the human-friendly session_id.",
           ),
       },
-      handler: async (args) => {
+      handler: async (args, meta) => {
         let row;
         try {
           row = repo.registerSession({
@@ -49,6 +49,7 @@ export function presenceTools(repo: Repository): McpTool[] {
             pid: args.pid ?? null,
             hostname: args.hostname ?? null,
             client_session_id: args.client_session_id ?? null,
+            identity: meta?.identity ?? null,
           });
         } catch (err) {
           if (err instanceof ClientSessionConflictError) {

@@ -10,6 +10,8 @@ export const ALL_TOOLS = [
   "resource_list",
   "broadcast",
   "read_inbox",
+  "project_close",
+  "project_reopen",
 ] as const;
 
 export type ToolName = (typeof ALL_TOOLS)[number];
@@ -28,6 +30,8 @@ const WRITE_TOOLS: ToolName[] = [
   "resource_claim",
   "resource_release",
   "broadcast",
+  "project_close",
+  "project_reopen",
 ];
 
 const ADMIN_TOOLS: ToolName[] = [...WRITE_TOOLS];
