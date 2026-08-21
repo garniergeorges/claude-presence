@@ -4,9 +4,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { openDatabase } from "./db/index.js";
 import { Repository } from "./db/repository.js";
 import { registerAllTools } from "./tools/registry.js";
+import { getPackageVersion } from "./version.js";
 
 const PACKAGE_NAME = "claude-presence";
-const PACKAGE_VERSION = "0.3.0";
+const PACKAGE_VERSION = getPackageVersion();
 
 const SERVER_INSTRUCTIONS = `
 This server coordinates multiple Claude Code sessions running in parallel on the same machine.

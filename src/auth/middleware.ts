@@ -16,7 +16,11 @@ export interface AuthResult {
   error?: string;
 }
 
-const CACHE_TTL_MS = 30_000;
+// Revocation happens via a separate `token revoke` CLI process writing to
+// the same SQLite file — there's no channel back into this process to call
+// invalidateAll(), so this TTL is the only bound on how long a revoked
+// token keeps working. Kept short rather than solved cleverly.
+const CACHE_TTL_MS = 5_000;
 
 interface CacheEntry {
   expiresAt: number;
