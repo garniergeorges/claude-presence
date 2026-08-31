@@ -159,7 +159,23 @@ export class Repository {
   pruneOldInbox(): number {
     const cutoff = this.now() - INBOX_RETENTION_MS;
     const stmt = this.db.prepare("DELETE FROM inbox WHERE created_at < ?");
-    return stmt.run(cutoff).changes;
+    const deleted = stmt.run(cutoff).changes;
+
+    // inbox_reads has no foreign key to inbox, so deleting a message leaves its
+    // read receipts behind permanently. Sweep them in the same pass — a receipt
+    // whose message no longer exists can never become meaningful again.
+    //
+    // Runs unconditionally rather than only when `deleted > 0`, so databases
+    // that already accumulated orphans are cleaned on the next prune.
+    //
+    // Deliberately does NOT delete receipts whose *session* is gone. Sessions
+    // are expected to re-register under a stable id, and dropping their
+    // receipts would resurface already-read messages as unread.
+    this.db
+      .prepare("DELETE FROM inbox_reads WHERE message_id NOT IN (SELECT id FROM inbox)")
+      .run();
+
+    return deleted;
   }
 
   pruneAll(): void {
