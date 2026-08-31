@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { spawn, ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
+import { createRequire } from "node:module";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,12 @@ interface JsonRpcResponse {
 
 function buildOnce(): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("npx", ["tsc"], {
+    // Resolve the local tsc and run it through the same Node binary that is
+    // running the tests. npx works on POSIX but is npx.cmd on Windows, which a
+    // shell-less spawn cannot resolve (ENOENT). This also matches how the
+    // server is started below, and skips the npx startup cost.
+    const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+    const proc = spawn(process.execPath, [tsc], {
       cwd: process.cwd(),
       stdio: "pipe",
     });
