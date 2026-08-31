@@ -9,9 +9,10 @@ import { TokenAuthenticator, writeAuthError } from "../auth/middleware.js";
 import { createMcpHttpHandler } from "./transport.js";
 import { handleHealth } from "./health.js";
 import { log } from "./logger.js";
+import { getPackageVersion } from "../version.js";
 
 const PACKAGE_NAME = "claude-presence";
-const PACKAGE_VERSION = "0.3.0";
+const PACKAGE_VERSION = getPackageVersion();
 
 const DEFAULT_PORT = 3471;
 const DEFAULT_HOST = "127.0.0.1";
