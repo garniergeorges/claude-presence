@@ -18,6 +18,10 @@ Before touching shared resources (CI, deploys, ports, staging DBs), try resource
 with a descriptive resource name. If ok=false, another session holds it — decide whether
 to wait, coordinate via broadcast, or ask the user.
 
+Messages from other sessions arrive in an inbox: call read_inbox to collect them.
+'warning' and 'urgent' messages are surfaced automatically on your next prompt;
+'info' ones wait until you read.
+
 Sessions are kept for 24 hours without a heartbeat. Call session_heartbeat
 occasionally if you want others to see this session as recently active,
 and session_unregister on clean exit.
